@@ -1,0 +1,26 @@
+{
+    "name": "database-restore-manager",
+    "version": "1.0.0",
+    "description": "Interactive database restore tool for S3 backups",
+    "main": "restore.js",
+    "bin": {
+        "db-restore": "./restore.js"
+    },
+    "scripts": {
+        "start": "node restore.js",
+        "install-global": "npm install -g ."
+    },
+    "dependencies": {
+        "aws-sdk": "^2.1498.0",
+        "keypress": "^0.2.1"
+    },
+    "keywords": [
+        "database",
+        "restore",
+        "s3",
+        "postgresql",
+        "backup"
+    ],
+    "author": "Raj Gohel",
+    "license": "MIT"
+}
