@@ -911,10 +911,23 @@ Please check if this is a valid PostgreSQL backup file.`);
         }
     }
 
+    // Get PostgreSQL environment with password
+    getPostgresEnv() {
+        const env = { ...process.env };
+        
+        // Set PGPASSWORD if a password is configured
+        if (CONFIG.postgres.password) {
+            env.PGPASSWORD = CONFIG.postgres.password;
+        }
+        
+        return env;
+    }
+
     // Check if PostgreSQL is running
     async checkPostgreSQL() {
         try {
-            execSync(`pg_isready -h ${CONFIG.postgres.host} -p ${CONFIG.postgres.port}`, { stdio: 'pipe' });
+            const env = this.getPostgresEnv();
+            execSync(`pg_isready -h ${CONFIG.postgres.host} -p ${CONFIG.postgres.port}`, { stdio: 'pipe', env });
             return true;
         } catch (error) {
             return false;
@@ -924,10 +937,11 @@ Please check if this is a valid PostgreSQL backup file.`);
     // Check if database exists
     async checkDatabaseExists(dbName) {
         try {
+            const env = this.getPostgresEnv();
             const query = `SELECT 1 FROM pg_database WHERE datname='${dbName}'`;
             const result = execSync(
                 `psql -h ${CONFIG.postgres.host} -p ${CONFIG.postgres.port} -U ${CONFIG.postgres.user} -d postgres -t -c "${query}"`,
-                { stdio: 'pipe' }
+                { stdio: 'pipe', env }
             ).toString().trim();
 
             return result === '1';
@@ -942,9 +956,10 @@ Please check if this is a valid PostgreSQL backup file.`);
         try {
             console.log(`🗄️  Creating database: ${dbName}...`);
 
+            const env = this.getPostgresEnv();
             execSync(
                 `psql -h ${CONFIG.postgres.host} -p ${CONFIG.postgres.port} -U ${CONFIG.postgres.user} -d postgres -c "CREATE DATABASE \\"${dbName}\\""`,
-                { stdio: 'pipe' }
+                { stdio: 'pipe', env }
             );
 
             console.log('✅ Database created successfully');
@@ -958,15 +973,16 @@ Please check if this is a valid PostgreSQL backup file.`);
         try {
             console.log(`🗑️  Dropping existing database: ${dbName}...`);
 
+            const env = this.getPostgresEnv();
             const terminateQuery = `SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '${dbName}' AND pid <> pg_backend_pid()`;
             execSync(
                 `psql -h ${CONFIG.postgres.host} -p ${CONFIG.postgres.port} -U ${CONFIG.postgres.user} -d postgres -c "${terminateQuery}"`,
-                { stdio: 'pipe' }
+                { stdio: 'pipe', env }
             );
 
             execSync(
                 `psql -h ${CONFIG.postgres.host} -p ${CONFIG.postgres.port} -U ${CONFIG.postgres.user} -d postgres -c "DROP DATABASE \\"${dbName}\\""`,
-                { stdio: 'pipe' }
+                { stdio: 'pipe', env }
             );
 
             console.log('✅ Database dropped successfully');
@@ -1030,6 +1046,7 @@ Please check if this is a valid PostgreSQL backup file.`);
             console.log('\n🔧 Fixing database ownership and permissions...');
 
             const baseOptions = `-h ${CONFIG.postgres.host} -p ${CONFIG.postgres.port} -U ${CONFIG.postgres.user}`;
+            const env = this.getPostgresEnv();
 
             // Basic ownership commands
             const ownershipCommands = [
@@ -1039,7 +1056,7 @@ Please check if this is a valid PostgreSQL backup file.`);
 
             for (const cmd of ownershipCommands) {
                 try {
-                    execSync(`psql ${baseOptions} -d "${dbName}" -c "${cmd}"`, { stdio: 'pipe' });
+                    execSync(`psql ${baseOptions} -d "${dbName}" -c "${cmd}"`, { stdio: 'pipe', env });
                 } catch (cmdError) {
                     console.warn(`Warning: Could not execute: ${cmd}`);
                 }
@@ -1050,14 +1067,14 @@ Please check if this is a valid PostgreSQL backup file.`);
                 const schemaQuery = `SELECT schemaname FROM pg_tables WHERE schemaname NOT IN ('information_schema', 'pg_catalog') GROUP BY schemaname;`;
                 const schemas = execSync(
                     `psql ${baseOptions} -d "${dbName}" -t -c "${schemaQuery}"`,
-                    { stdio: 'pipe', encoding: 'utf8' }
+                    { stdio: 'pipe', encoding: 'utf8', env }
                 ).trim().split('\n').filter(s => s.trim());
 
                 for (const schema of schemas) {
                     const cleanSchema = schema.trim();
                     if (cleanSchema) {
                         try {
-                            execSync(`psql ${baseOptions} -d "${dbName}" -c "ALTER SCHEMA \\"${cleanSchema}\\" OWNER TO ${CONFIG.postgres.user};"`, { stdio: 'pipe' });
+                            execSync(`psql ${baseOptions} -d "${dbName}" -c "ALTER SCHEMA \\"${cleanSchema}\\" OWNER TO ${CONFIG.postgres.user};"`, { stdio: 'pipe', env });
                         } catch (err) {
                             console.warn(`Warning: Could not change ownership of schema: ${cleanSchema}`);
                         }
@@ -1072,7 +1089,7 @@ Please check if this is a valid PostgreSQL backup file.`);
                 const tableQuery = `SELECT schemaname, tablename FROM pg_tables WHERE schemaname NOT IN ('information_schema', 'pg_catalog');`;
                 const tables = execSync(
                     `psql ${baseOptions} -d "${dbName}" -t -c "${tableQuery}"`,
-                    { stdio: 'pipe', encoding: 'utf8' }
+                    { stdio: 'pipe', encoding: 'utf8', env }
                 ).trim().split('\n').filter(t => t.trim());
 
                 for (const table of tables) {
@@ -1081,7 +1098,7 @@ Please check if this is a valid PostgreSQL backup file.`);
                         const schema = parts[0].trim();
                         const tableName = parts[1].trim();
                         try {
-                            execSync(`psql ${baseOptions} -d "${dbName}" -c "ALTER TABLE \\"${schema}\\".\\"${tableName}\\" OWNER TO ${CONFIG.postgres.user};"`, { stdio: 'pipe' });
+                            execSync(`psql ${baseOptions} -d "${dbName}" -c "ALTER TABLE \\"${schema}\\".\\"${tableName}\\" OWNER TO ${CONFIG.postgres.user};"`, { stdio: 'pipe', env });
                         } catch (err) {
                             console.warn(`Warning: Could not change ownership of table: ${schema}.${tableName}`);
                         }
@@ -1104,9 +1121,10 @@ Please check if this is a valid PostgreSQL backup file.`);
             console.log('\n🔍 Verifying restore...');
 
             const baseOptions = `-h ${CONFIG.postgres.host} -p ${CONFIG.postgres.port} -U ${CONFIG.postgres.user}`;
+            const env = this.getPostgresEnv();
 
             const connectTest = `psql ${baseOptions} -d "${dbName}" -c "SELECT 1;" -t`;
-            execSync(connectTest, { stdio: 'pipe' });
+            execSync(connectTest, { stdio: 'pipe', env });
 
             const tableCountQuery = `
         SELECT COUNT(*) as table_count 
@@ -1115,7 +1133,7 @@ Please check if this is a valid PostgreSQL backup file.`);
       `;
             const tableCountResult = execSync(
                 `psql ${baseOptions} -d "${dbName}" -t -c "${tableCountQuery}"`,
-                { stdio: 'pipe', encoding: 'utf8' }
+                { stdio: 'pipe', encoding: 'utf8', env }
             ).trim();
 
             const tableCount = parseInt(tableCountResult) || 0;
@@ -1123,7 +1141,7 @@ Please check if this is a valid PostgreSQL backup file.`);
             const sizeQuery = `SELECT pg_size_pretty(pg_database_size('${dbName}'));`;
             const sizeResult = execSync(
                 `psql ${baseOptions} -d postgres -t -c "${sizeQuery}"`,
-                { stdio: 'pipe', encoding: 'utf8' }
+                { stdio: 'pipe', encoding: 'utf8', env }
             ).trim();
 
             console.log(`📊 Restore verification:`);

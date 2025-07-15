@@ -122,6 +122,7 @@ AWS_PROFILES=dev,stage,prod,default
 
 # PostgreSQL Configuration
 PG_USER=postgres
+PG_PASSWORD=
 PG_HOST=localhost
 PG_PORT=5432
 

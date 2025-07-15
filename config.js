@@ -23,6 +23,7 @@ module.exports = {
     // PostgreSQL configuration
     postgres: {
         user: process.env.PG_USER || 'postgres',
+        password: process.env.PG_PASSWORD || '',
         host: process.env.PG_HOST || 'localhost',
         port: parseInt(process.env.PG_PORT) || 5432
     },
