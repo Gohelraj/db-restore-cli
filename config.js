@@ -30,7 +30,7 @@ module.exports = {
 
     // Application settings
     app: {
-        localTempDir: process.env.LOCAL_TEMP_DIR || '/tmp/db-restore',
+        localTempDir: process.env.LOCAL_TEMP_DIR || require('path').join(require('os').tmpdir(), 'db-restore'),
         supportedFormats: ['.tar.gz', '.tar'],
         maxRetries: parseInt(process.env.MAX_RETRIES) || 3
     }

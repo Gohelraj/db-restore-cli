@@ -10,6 +10,111 @@ const crypto = require('crypto');
 // Load configuration from external file
 const CONFIG = require('./config.js');
 
+// Cross-platform utility class
+class PlatformUtils {
+    static isWindows() {
+        return process.platform === 'win32';
+    }
+
+    static isLinux() {
+        return process.platform === 'linux';
+    }
+
+    static isMacOS() {
+        return process.platform === 'darwin';
+    }
+
+    static getCommandPath(command) {
+        if (this.isWindows()) {
+            // On Windows, these commands might have .exe extension or be in specific paths
+            const extensions = ['', '.exe', '.cmd', '.bat'];
+            for (const ext of extensions) {
+                try {
+                    execSync(`where ${command}${ext}`, { stdio: 'pipe' });
+                    return command + ext;
+                } catch (e) {
+                    // Continue searching
+                }
+            }
+        }
+        return command; // Unix/Linux
+    }
+
+    static getTarCommand() {
+        if (this.isWindows()) {
+            // Windows 10+ has built-in tar, but check for alternatives
+            try {
+                execSync('tar --version', { stdio: 'pipe' });
+                return 'tar';
+            } catch (e) {
+                // Fallback to 7-zip if available
+                try {
+                    execSync('7z', { stdio: 'pipe' });
+                    return '7z';
+                } catch (e2) {
+                    throw new Error('No suitable archive extraction tool found. Please install 7-Zip or use Windows 10+ built-in tar.');
+                }
+            }
+        }
+        return 'tar';
+    }
+
+    static getRemoveCommand(dirPath) {
+        if (this.isWindows()) {
+            return `rmdir /s /q "${dirPath}"`;
+        }
+        return `rm -rf "${dirPath}"`;
+    }
+
+    static getGunzipCommand(inputPath, outputPath) {
+        if (this.isWindows()) {
+            // Try PowerShell first, then 7-Zip
+            const powershellCmd = `powershell -Command "& {$input = [System.IO.File]::OpenRead('${inputPath.replace(/\\/g, '\\\\')}'); $gzip = New-Object System.IO.Compression.GzipStream($input, [System.IO.Compression.CompressionMode]::Decompress); $output = [System.IO.File]::Create('${outputPath.replace(/\\/g, '\\\\')}'); $gzip.CopyTo($output); $gzip.Close(); $output.Close(); $input.Close()}"`;
+            
+            // Test if PowerShell is available and supports compression
+            try {
+                execSync('powershell -Command "Get-Command Expand-Archive"', { stdio: 'pipe' });
+                return powershellCmd;
+            } catch (e) {
+                // Fallback to 7-Zip
+                return `7z x "${inputPath}" -o"${path.dirname(outputPath)}"`;
+            }
+        }
+        return `gunzip -c "${inputPath}" > "${outputPath}"`;
+    }
+
+    static validatePostgreSQLTools() {
+        const tools = ['psql', 'pg_restore', 'pg_isready'];
+        const missing = [];
+
+        for (const tool of tools) {
+            try {
+                const cmd = this.getCommandPath(tool);
+                execSync(`${cmd} --version`, { stdio: 'pipe' });
+            } catch (e) {
+                missing.push(tool);
+            }
+        }
+
+        if (missing.length > 0) {
+            const platform = this.isWindows() ? 'Windows' : this.isLinux() ? 'Linux' : 'macOS';
+            let installMsg = '';
+            
+            if (this.isWindows()) {
+                installMsg = 'Please install PostgreSQL and ensure tools are in PATH, or download from https://www.postgresql.org/download/windows/';
+            } else if (this.isLinux()) {
+                installMsg = 'Please install postgresql-client: sudo apt-get install postgresql-client (Debian/Ubuntu) or sudo yum install postgresql (RHEL/CentOS)';
+            } else {
+                installMsg = 'Please install PostgreSQL: brew install postgresql';
+            }
+
+            throw new Error(`Missing PostgreSQL tools on ${platform}: ${missing.join(', ')}.\n${installMsg}`);
+        }
+
+        return true;
+    }
+}
+
 // Extend CONFIG with runtime properties
 Object.assign(CONFIG, {
     selectedProfile: null,
@@ -222,9 +327,22 @@ class DatabaseRestoreManager {
 
     async extractTarGz(tarGzPath, extractDir) {
         try {
-            const extractCommand = `cd "${extractDir}" && tar -xzf "${tarGzPath}"`;
+            const tarCmd = PlatformUtils.getTarCommand();
+            
+            let extractCommand;
+            if (tarCmd === '7z') {
+                // 7-Zip command for Windows
+                extractCommand = `7z x "${tarGzPath}" -so | 7z x -aoa -si -ttar -o"${extractDir}"`;
+            } else {
+                // Standard tar command - use cross-platform approach
+                if (PlatformUtils.isWindows()) {
+                    extractCommand = `cd /d "${extractDir}" && ${tarCmd} -xzf "${tarGzPath}"`;
+                } else {
+                    extractCommand = `cd "${extractDir}" && ${tarCmd} -xzf "${tarGzPath}"`;
+                }
+            }
+            
             console.log(`Executing: ${extractCommand}`);
-
             execSync(extractCommand, { stdio: 'inherit' });
 
             // Find the extracted .sql file
@@ -237,9 +355,22 @@ class DatabaseRestoreManager {
 
     async extractTar(tarPath, extractDir) {
         try {
-            const extractCommand = `cd "${extractDir}" && tar -xf "${tarPath}"`;
+            const tarCmd = PlatformUtils.getTarCommand();
+            
+            let extractCommand;
+            if (tarCmd === '7z') {
+                // 7-Zip command for Windows
+                extractCommand = `7z x "${tarPath}" -o"${extractDir}"`;
+            } else {
+                // Standard tar command - use cross-platform approach
+                if (PlatformUtils.isWindows()) {
+                    extractCommand = `cd /d "${extractDir}" && ${tarCmd} -xf "${tarPath}"`;
+                } else {
+                    extractCommand = `cd "${extractDir}" && ${tarCmd} -xf "${tarPath}"`;
+                }
+            }
+            
             console.log(`Executing: ${extractCommand}`);
-
             execSync(extractCommand, { stdio: 'inherit' });
 
             // Find the extracted .sql file
@@ -260,10 +391,9 @@ class DatabaseRestoreManager {
             }
 
             const outputPath = path.join(extractDir, filename);
-
-            const extractCommand = `gunzip -c "${gzPath}" > "${outputPath}"`;
+            const extractCommand = PlatformUtils.getGunzipCommand(gzPath, outputPath);
+            
             console.log(`🔧 Executing: ${extractCommand}`);
-
             execSync(extractCommand, { stdio: 'inherit' });
 
             // Verify the extracted file exists and has content
@@ -926,8 +1056,9 @@ Please check if this is a valid PostgreSQL backup file.`);
     // Check if PostgreSQL is running
     async checkPostgreSQL() {
         try {
+            const pgIsReadyCmd = PlatformUtils.getCommandPath('pg_isready');
             const env = this.getPostgresEnv();
-            execSync(`pg_isready -h ${CONFIG.postgres.host} -p ${CONFIG.postgres.port}`, { stdio: 'pipe', env });
+            execSync(`${pgIsReadyCmd} -h ${CONFIG.postgres.host} -p ${CONFIG.postgres.port}`, { stdio: 'pipe', env });
             return true;
         } catch (error) {
             return false;
@@ -937,10 +1068,11 @@ Please check if this is a valid PostgreSQL backup file.`);
     // Check if database exists
     async checkDatabaseExists(dbName) {
         try {
+            const psqlCmd = PlatformUtils.getCommandPath('psql');
             const env = this.getPostgresEnv();
             const query = `SELECT 1 FROM pg_database WHERE datname='${dbName}'`;
             const result = execSync(
-                `psql -h ${CONFIG.postgres.host} -p ${CONFIG.postgres.port} -U ${CONFIG.postgres.user} -d postgres -t -c "${query}"`,
+                `${psqlCmd} -h ${CONFIG.postgres.host} -p ${CONFIG.postgres.port} -U ${CONFIG.postgres.user} -d postgres -t -c "${query}"`,
                 { stdio: 'pipe', env }
             ).toString().trim();
 
@@ -956,9 +1088,10 @@ Please check if this is a valid PostgreSQL backup file.`);
         try {
             console.log(`🗄️  Creating database: ${dbName}...`);
 
+            const psqlCmd = PlatformUtils.getCommandPath('psql');
             const env = this.getPostgresEnv();
             execSync(
-                `psql -h ${CONFIG.postgres.host} -p ${CONFIG.postgres.port} -U ${CONFIG.postgres.user} -d postgres -c "CREATE DATABASE \\"${dbName}\\""`,
+                `${psqlCmd} -h ${CONFIG.postgres.host} -p ${CONFIG.postgres.port} -U ${CONFIG.postgres.user} -d postgres -c "CREATE DATABASE \\"${dbName}\\""`,
                 { stdio: 'pipe', env }
             );
 
@@ -973,15 +1106,16 @@ Please check if this is a valid PostgreSQL backup file.`);
         try {
             console.log(`🗑️  Dropping existing database: ${dbName}...`);
 
+            const psqlCmd = PlatformUtils.getCommandPath('psql');
             const env = this.getPostgresEnv();
             const terminateQuery = `SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '${dbName}' AND pid <> pg_backend_pid()`;
             execSync(
-                `psql -h ${CONFIG.postgres.host} -p ${CONFIG.postgres.port} -U ${CONFIG.postgres.user} -d postgres -c "${terminateQuery}"`,
+                `${psqlCmd} -h ${CONFIG.postgres.host} -p ${CONFIG.postgres.port} -U ${CONFIG.postgres.user} -d postgres -c "${terminateQuery}"`,
                 { stdio: 'pipe', env }
             );
 
             execSync(
-                `psql -h ${CONFIG.postgres.host} -p ${CONFIG.postgres.port} -U ${CONFIG.postgres.user} -d postgres -c "DROP DATABASE \\"${dbName}\\""`,
+                `${psqlCmd} -h ${CONFIG.postgres.host} -p ${CONFIG.postgres.port} -U ${CONFIG.postgres.user} -d postgres -c "DROP DATABASE \\"${dbName}\\""`,
                 { stdio: 'pipe', env }
             );
 
@@ -1554,22 +1688,36 @@ Please check if this is a valid PostgreSQL backup file.`);
 
         try {
             if (fs.existsSync(CONFIG.app.localTempDir)) {
-                // Only clean specific files, not the entire temp directory
-                const tempFiles = fs.readdirSync(CONFIG.app.localTempDir);
-                tempFiles.forEach(file => {
-                    if (file.includes('backup') || file.includes('restore') || file.endsWith('.sql')) {
-                        const filePath = path.join(CONFIG.app.localTempDir, file);
-                        try {
-                            fs.unlinkSync(filePath);
-                        } catch (err) {
-                            // Ignore errors during cleanup
-                        }
-                    }
-                });
-                console.log('🧹 Temporary files cleaned up');
+                const removeCommand = PlatformUtils.getRemoveCommand(CONFIG.app.localTempDir);
+                try {
+                    execSync(removeCommand, { stdio: 'pipe' });
+                    console.log('🧹 Temporary files cleaned up');
+                } catch (err) {
+                    // Fallback to manual file deletion
+                    this.manualCleanup(CONFIG.app.localTempDir);
+                }
             }
         } catch (error) {
             console.warn(`Warning: Could not clean up temporary files: ${error.message}`);
+        }
+    }
+
+    manualCleanup(dir) {
+        try {
+            const files = fs.readdirSync(dir);
+            files.forEach(file => {
+                const filePath = path.join(dir, file);
+                const stat = fs.statSync(filePath);
+                if (stat.isDirectory()) {
+                    this.manualCleanup(filePath);
+                    fs.rmdirSync(filePath);
+                } else {
+                    fs.unlinkSync(filePath);
+                }
+            });
+            console.log('🧹 Manual cleanup completed');
+        } catch (error) {
+            console.warn(`Manual cleanup failed: ${error.message}`);
         }
     }
 
@@ -2079,6 +2227,23 @@ Please check if this is a valid PostgreSQL backup file.`);
             console.log('🚀 Database Restore Manager');
             console.log('============================');
             console.log('Universal Database Restore Tool\n');
+
+            // Platform validation
+            console.log(`🖥️  Platform: ${PlatformUtils.isWindows() ? 'Windows' : PlatformUtils.isLinux() ? 'Linux' : 'macOS'}`);
+            
+            // Validate PostgreSQL tools before proceeding
+            try {
+                console.log('🔍 Validating PostgreSQL tools...');
+                PlatformUtils.validatePostgreSQLTools();
+                console.log('✅ PostgreSQL tools validated successfully\n');
+            } catch (validationError) {
+                console.error(`❌ ${validationError.message}\n`);
+                const continueChoice = await this.prompt('Continue anyway? (y/n): ');
+                if (continueChoice.toLowerCase() !== 'y') {
+                    console.log('❌ Operation cancelled');
+                    return;
+                }
+            }
 
             // Step 1: Select source type
             await this.selectSourceType();
