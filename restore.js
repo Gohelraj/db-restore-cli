@@ -201,6 +201,12 @@ class DatabaseRestoreManager {
             // Normalize the path for the current platform
             let resolvedPath = dumpPath.trim();
             
+            // Remove surrounding quotes if present (common on Windows)
+            if ((resolvedPath.startsWith('"') && resolvedPath.endsWith('"')) ||
+                (resolvedPath.startsWith("'") && resolvedPath.endsWith("'"))) {
+                resolvedPath = resolvedPath.slice(1, -1);
+            }
+            
             // If it's already an absolute path, use it as-is, otherwise resolve it
             if (path.isAbsolute(resolvedPath)) {
                 // On Windows, normalize the path separators
