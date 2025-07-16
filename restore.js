@@ -1542,18 +1542,33 @@ Please check if this is a valid PostgreSQL backup file.`);
             }
 
             // Count all tables (including those not in public schema)
-            const allTablesQuery = `
-                SELECT COUNT(*) 
-                FROM information_schema.tables 
-                WHERE table_schema NOT IN ('information_schema', 'pg_catalog');
-            `;
+            const allTablesQuery = `SELECT COUNT(*) FROM information_schema.tables WHERE table_schema NOT IN ('information_schema', 'pg_catalog');`;
 
-            const allTablesResult = execSync(
-                `psql ${baseOptions} -d ${dbName} -t -c "${allTablesQuery}"`,
-                { encoding: 'utf8', env }
-            ).trim();
+            let allTablesResult;
+            try {
+                allTablesResult = execSync(
+                    `psql ${baseOptions} -d "${dbName}" -t -A -c "${allTablesQuery}"`,
+                    { encoding: 'utf8', env }
+                );
+                
+                // Clean up the result more thoroughly for Windows
+                const cleanResult = allTablesResult
+                    .replace(/\r\n/g, '\n')  // Normalize Windows line endings
+                    .replace(/\r/g, '\n')     // Handle old Mac line endings
+                    .split('\n')              // Split into lines
+                    .map(line => line.trim()) // Trim each line
+                    .filter(line => line.length > 0 && !isNaN(parseInt(line))) // Keep only numeric lines
+                    .join('');                // Join back
+                
+                console.log(`🔍 Raw table count result: "${allTablesResult}"`);
+                console.log(`🧹 Cleaned result: "${cleanResult}"`);
+                
+            } catch (queryError) {
+                console.warn(`Warning: Could not execute table count query: ${queryError.message}`);
+                allTablesResult = '0';
+            }
 
-            const totalTableCount = parseInt(allTablesResult) || 0;
+            const totalTableCount = parseInt(allTablesResult.trim().replace(/\r?\n/g, '').replace(/[^0-9]/g, '')) || 0;
             console.log(`📊 Total tables found: ${totalTableCount}`);
 
             // Get detailed table information
