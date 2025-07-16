@@ -8,7 +8,29 @@
     },
     "scripts": {
         "start": "node restore.js",
-        "install-global": "npm install -g ."
+        "install-global": "npm install -g .",
+        "build": "pkg . --targets node18-win-x64,node18-linux-x64,node18-macos-x64,node18-macos-arm64 --out-path ./build/",
+        "build:win": "pkg . --targets node18-win-x64 --output ./build/db-restore-win.exe",
+        "build:linux": "pkg . --targets node18-linux-x64 --output ./build/db-restore-linux",
+        "build:macos": "pkg . --targets node18-macos-x64 --output ./build/db-restore-macos",
+        "build:macos-arm": "pkg . --targets node18-macos-arm64 --output ./build/db-restore-macos-arm64",
+        "build:all": "npm run build:win && npm run build:linux && npm run build:macos && npm run build:macos-arm"
+    },
+    "pkg": {
+        "scripts": [
+            "restore.js",
+            "config.js"
+        ],
+        "assets": [
+            ".env.example"
+        ],
+        "targets": [
+            "node18-win-x64",
+            "node18-linux-x64",
+            "node18-macos-x64",
+            "node18-macos-arm64"
+        ],
+        "outputPath": "build"
     },
     "dependencies": {
         "aws-sdk": "^2.1498.0",
@@ -20,7 +42,10 @@
         "restore",
         "s3",
         "postgresql",
-        "backup"
+        "backup",
+        "cli",
+        "binary",
+        "standalone"
     ],
     "author": "Raj Gohel",
     "license": "MIT"

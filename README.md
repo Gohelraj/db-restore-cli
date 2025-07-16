@@ -544,27 +544,51 @@ git clone https://github.com/Gohelraj/db-restore-cli.git
 cd db-restore-cli
 npm install
 
-# Build for current platform
-npx pkg . --output ./build/db-restore
+# Build for current platform (using Node.js 18 - most stable with pkg)
+npx pkg . --targets node18 --output ./build/db-restore
 
 # Build for all major platforms
-npx pkg . --targets latest-win-x64,latest-linux-x64,latest-macos-x64 --output ./build/db-restore
+npx pkg . --targets node18-win-x64,node18-linux-x64,node18-macos-x64 --out-path ./build/
 ```
 
 #### Platform-Specific Builds
 
 ```bash
 # Windows (64-bit)
-npx pkg . --targets latest-win-x64 --output ./build/db-restore-win.exe
+npx pkg . --targets node18-win-x64 --output ./build/db-restore-win.exe
 
 # Linux (64-bit)
-npx pkg . --targets latest-linux-x64 --output ./build/db-restore-linux
+npx pkg . --targets node18-linux-x64 --output ./build/db-restore-linux
 
-# macOS (64-bit)
-npx pkg . --targets latest-macos-x64 --output ./build/db-restore-macos
+# macOS (64-bit Intel)
+npx pkg . --targets node18-macos-x64 --output ./build/db-restore-macos
+
+# macOS (64-bit Apple Silicon)
+npx pkg . --targets node18-macos-arm64 --output ./build/db-restore-macos-arm64
 
 # All platforms at once
-npx pkg . --targets latest-win-x64,latest-linux-x64,latest-macos-x64 --out-path ./build/
+npx pkg . --targets node18-win-x64,node18-linux-x64,node18-macos-x64,node18-macos-arm64 --out-path ./build/
+```
+
+#### Troubleshooting Build Issues
+
+**Error: "No available node version satisfies 'nodeXX'"**
+```bash
+# Use specific supported versions instead of 'latest'
+# pkg supports these Node.js versions: 14, 16, 18, 20
+npx pkg . --targets node18-win-x64,node18-linux-x64,node18-macos-x64 --out-path ./build/
+
+# Check available targets
+npx pkg --help
+```
+
+**Alternative Node.js versions if node18 doesn't work:**
+```bash
+# Try Node.js 20 (newer but stable)
+npx pkg . --targets node20-win-x64,node20-linux-x64,node20-macos-x64 --out-path ./build/
+
+# Or Node.js 16 (older but very stable)
+npx pkg . --targets node16-win-x64,node16-linux-x64,node16-macos-x64 --out-path ./build/
 ```
 
 #### Advanced Build Configuration
@@ -587,9 +611,10 @@ Add this to your `package.json` for more control:
       ".env.example"
     ],
     "targets": [
-      "latest-win-x64",
-      "latest-linux-x64",
-      "latest-macos-x64"
+      "node18-win-x64",
+      "node18-linux-x64",
+      "node18-macos-x64",
+      "node18-macos-arm64"
     ],
     "outputPath": "build"
   }
@@ -608,11 +633,12 @@ Add these scripts to `package.json`:
 ```json
 {
   "scripts": {
-    "build": "pkg . --out-path ./build/",
-    "build:win": "pkg . --targets latest-win-x64 --output ./build/db-restore-win.exe",
-    "build:linux": "pkg . --targets latest-linux-x64 --output ./build/db-restore-linux",
-    "build:macos": "pkg . --targets latest-macos-x64 --output ./build/db-restore-macos",
-    "build:all": "npm run build:win && npm run build:linux && npm run build:macos"
+    "build": "pkg . --targets node18-win-x64,node18-linux-x64,node18-macos-x64,node18-macos-arm64 --out-path ./build/",
+    "build:win": "pkg . --targets node18-win-x64 --output ./build/db-restore-win.exe",
+    "build:linux": "pkg . --targets node18-linux-x64 --output ./build/db-restore-linux",
+    "build:macos": "pkg . --targets node18-macos-x64 --output ./build/db-restore-macos",
+    "build:macos-arm": "pkg . --targets node18-macos-arm64 --output ./build/db-restore-macos-arm64",
+    "build:all": "npm run build:win && npm run build:linux && npm run build:macos && npm run build:macos-arm"
   }
 }
 ```
@@ -847,7 +873,7 @@ jobs:
       - run: npm ci
       - run: npm install -g pkg
       
-      - run: pkg . --targets latest-win-x64,latest-linux-x64,latest-macos-x64 --out-path ./build/
+      - run: pkg . --targets node18-win-x64,node18-linux-x64,node18-macos-x64,node18-macos-arm64 --out-path ./build/
       
       - uses: actions/upload-artifact@v3
         with:
