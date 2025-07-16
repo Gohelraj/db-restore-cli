@@ -70,7 +70,7 @@ class PlatformUtils {
         if (this.isWindows()) {
             // Try PowerShell first, then 7-Zip
             const powershellCmd = `powershell -Command "& {$input = [System.IO.File]::OpenRead('${inputPath.replace(/\\/g, '\\\\')}'); $gzip = New-Object System.IO.Compression.GzipStream($input, [System.IO.Compression.CompressionMode]::Decompress); $output = [System.IO.File]::Create('${outputPath.replace(/\\/g, '\\\\')}'); $gzip.CopyTo($output); $gzip.Close(); $output.Close(); $input.Close()}"`;
-            
+
             // Test if PowerShell is available and supports compression
             try {
                 execSync('powershell -Command "Get-Command Expand-Archive"', { stdio: 'pipe' });
@@ -99,7 +99,7 @@ class PlatformUtils {
         if (missing.length > 0) {
             const platform = this.isWindows() ? 'Windows' : this.isLinux() ? 'Linux' : 'macOS';
             let installMsg = '';
-            
+
             if (this.isWindows()) {
                 installMsg = 'Please install PostgreSQL and ensure tools are in PATH, or download from https://www.postgresql.org/download/windows/';
             } else if (this.isLinux()) {
@@ -200,13 +200,13 @@ class DatabaseRestoreManager {
 
             // Normalize the path for the current platform
             let resolvedPath = dumpPath.trim();
-            
+
             // Remove surrounding quotes if present (common on Windows)
             if ((resolvedPath.startsWith('"') && resolvedPath.endsWith('"')) ||
                 (resolvedPath.startsWith("'") && resolvedPath.endsWith("'"))) {
                 resolvedPath = resolvedPath.slice(1, -1);
             }
-            
+
             // If it's already an absolute path, use it as-is, otherwise resolve it
             if (path.isAbsolute(resolvedPath)) {
                 // On Windows, normalize the path separators
@@ -345,7 +345,7 @@ class DatabaseRestoreManager {
     async extractTarGz(tarGzPath, extractDir) {
         try {
             const tarCmd = PlatformUtils.getTarCommand();
-            
+
             let extractCommand;
             if (tarCmd === '7z') {
                 // 7-Zip command for Windows - use proper Windows path quoting
@@ -356,7 +356,7 @@ class DatabaseRestoreManager {
                 // Standard tar command - use absolute paths to avoid path issues
                 const absoluteTarPath = path.resolve(tarGzPath);
                 const absoluteExtractDir = path.resolve(extractDir);
-                
+
                 if (PlatformUtils.isWindows()) {
                     // Use tar directly with absolute paths instead of cd
                     extractCommand = `${tarCmd} -xzf "${absoluteTarPath}" -C "${absoluteExtractDir}"`;
@@ -364,7 +364,7 @@ class DatabaseRestoreManager {
                     extractCommand = `cd "${absoluteExtractDir}" && ${tarCmd} -xzf "${absoluteTarPath}"`;
                 }
             }
-            
+
             console.log(`Executing: ${extractCommand}`);
             execSync(extractCommand, { stdio: 'inherit' });
 
@@ -379,7 +379,7 @@ class DatabaseRestoreManager {
     async extractTar(tarPath, extractDir) {
         try {
             const tarCmd = PlatformUtils.getTarCommand();
-            
+
             let extractCommand;
             if (tarCmd === '7z') {
                 // 7-Zip command for Windows - use proper Windows path quoting
@@ -390,7 +390,7 @@ class DatabaseRestoreManager {
                 // Standard tar command - use absolute paths to avoid path issues
                 const absoluteTarPath = path.resolve(tarPath);
                 const absoluteExtractDir = path.resolve(extractDir);
-                
+
                 if (PlatformUtils.isWindows()) {
                     // Use tar directly with absolute paths instead of cd
                     extractCommand = `${tarCmd} -xf "${absoluteTarPath}" -C "${absoluteExtractDir}"`;
@@ -398,7 +398,7 @@ class DatabaseRestoreManager {
                     extractCommand = `cd "${absoluteExtractDir}" && ${tarCmd} -xf "${absoluteTarPath}"`;
                 }
             }
-            
+
             console.log(`Executing: ${extractCommand}`);
             execSync(extractCommand, { stdio: 'inherit' });
 
@@ -421,7 +421,7 @@ class DatabaseRestoreManager {
 
             const outputPath = path.join(extractDir, filename);
             const extractCommand = PlatformUtils.getGunzipCommand(gzPath, outputPath);
-            
+
             console.log(`🔧 Executing: ${extractCommand}`);
             execSync(extractCommand, { stdio: 'inherit' });
 
@@ -1073,7 +1073,7 @@ Please check if this is a valid PostgreSQL backup file.`);
     // Get PostgreSQL environment with password
     getPostgresEnv() {
         const env = { ...process.env };
-        
+
         // Set PGPASSWORD if a password is configured
         if (CONFIG.postgres.password) {
             env.PGPASSWORD = CONFIG.postgres.password;
@@ -1084,7 +1084,7 @@ Please check if this is a valid PostgreSQL backup file.`);
             // Set empty password to avoid prompts for trust authentication
             env.PGPASSWORD = '';
         }
-        
+
         return env;
     }
 
@@ -1550,7 +1550,7 @@ Please check if this is a valid PostgreSQL backup file.`);
                     `psql ${baseOptions} -d "${dbName}" -t -A -c "${allTablesQuery}"`,
                     { encoding: 'utf8', env }
                 );
-                
+
                 // Clean up the result more thoroughly for Windows
                 const cleanResult = allTablesResult
                     .replace(/\r\n/g, '\n')  // Normalize Windows line endings
@@ -1559,10 +1559,10 @@ Please check if this is a valid PostgreSQL backup file.`);
                     .map(line => line.trim()) // Trim each line
                     .filter(line => line.length > 0 && !isNaN(parseInt(line))) // Keep only numeric lines
                     .join('');                // Join back
-                
+
                 console.log(`🔍 Raw table count result: "${allTablesResult}"`);
                 console.log(`🧹 Cleaned result: "${cleanResult}"`);
-                
+
             } catch (queryError) {
                 console.warn(`Warning: Could not execute table count query: ${queryError.message}`);
                 allTablesResult = '0';
@@ -2014,7 +2014,9 @@ Please check if this is a valid PostgreSQL backup file.`);
                         "@dbeaver-show-non-default-db@": "false",
                         "@dbeaver-chosen-role@": ""
                     },
-                    "auth-model": "native"
+                    "auth-model": "native",
+                    "user": CONFIG.postgres.user,
+                    "password": CONFIG.postgres.password,
                 }
             };
 
@@ -2274,7 +2276,7 @@ Please check if this is a valid PostgreSQL backup file.`);
 
             // Platform validation
             console.log(`🖥️  Platform: ${PlatformUtils.isWindows() ? 'Windows' : PlatformUtils.isLinux() ? 'Linux' : 'macOS'}`);
-            
+
             // Validate PostgreSQL tools before proceeding
             try {
                 console.log('🔍 Validating PostgreSQL tools...');
