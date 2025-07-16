@@ -62,6 +62,9 @@ A comprehensive interactive CLI tool for restoring PostgreSQL databases from S3 
 ## 🛠️ Installation
 
 ### Option 1: Global Installation
+
+**Important:** Global installation requires setting up PostgreSQL credentials via environment variables since the global installation won't have access to a local `.env` file.
+
 ```bash
 # Clone the repository
 git clone https://github.com/Gohelraj/db-restore-cli.git
@@ -73,7 +76,40 @@ npm install
 # Install globally
 npm run install-global
 
+# Set required environment variables for PostgreSQL
+export PG_USER=postgres
+export PG_PASSWORD=your_postgres_password
+export PG_HOST=localhost
+export PG_PORT=5432
+
 # Use from anywhere
+db-restore
+```
+
+**Alternative approach for persistent global configuration:**
+```bash
+# Create a global .env file in your home directory
+echo "PG_USER=postgres" >> ~/.db-restore.env
+echo "PG_PASSWORD=your_postgres_password" >> ~/.db-restore.env
+echo "PG_HOST=localhost" >> ~/.db-restore.env
+echo "PG_PORT=5432" >> ~/.db-restore.env
+
+# Set the environment variable to point to this file
+export DOTENV_CONFIG_PATH=~/.db-restore.env
+
+# Then run the tool
+db-restore
+```
+
+**On Windows:**
+```cmd
+# Set environment variables
+set PG_USER=postgres
+set PG_PASSWORD=your_postgres_password
+set PG_HOST=localhost
+set PG_PORT=5432
+
+# Run the tool
 db-restore
 ```
 
@@ -101,6 +137,7 @@ cp .env.example .env
 
 ### 2. Configure Environment Variables
 
+#### For Local Installation:
 Edit `.env` with your specific settings:
 
 ```bash
@@ -122,13 +159,51 @@ AWS_PROFILES=dev,stage,prod,default
 
 # PostgreSQL Configuration
 PG_USER=postgres
-PG_PASSWORD=
+PG_PASSWORD=your_postgres_password
 PG_HOST=localhost
 PG_PORT=5432
 
 # Application Settings
 LOCAL_TEMP_DIR=/tmp/db-restore
 MAX_RETRIES=3
+```
+
+#### For Global Installation:
+Since global installations don't have access to local `.env` files, you must set environment variables:
+
+**Unix/Linux/macOS:**
+```bash
+# Add these to your ~/.bashrc, ~/.zshrc, or ~/.profile
+export PG_USER=postgres
+export PG_PASSWORD=your_postgres_password
+export PG_HOST=localhost
+export PG_PORT=5432
+
+# Optional: S3 configuration for cloud backups
+export S3_BUCKET_DEV=my-dev-backups
+export S3_BUCKET_STAGE=my-stage-backups
+export S3_BUCKET_PROD=my-prod-backups
+export AWS_REGION_DEV=ap-south-1
+export AWS_REGION_STAGE=eu-south-1
+export AWS_REGION_PROD=eu-south-1
+```
+
+**Windows:**
+```cmd
+# Set permanently via System Properties > Environment Variables, or use setx
+setx PG_USER postgres
+setx PG_PASSWORD your_postgres_password
+setx PG_HOST localhost
+setx PG_PORT 5432
+```
+
+**PowerShell:**
+```powershell
+# Add to your PowerShell profile
+[Environment]::SetEnvironmentVariable("PG_USER", "postgres", "User")
+[Environment]::SetEnvironmentVariable("PG_PASSWORD", "your_postgres_password", "User")
+[Environment]::SetEnvironmentVariable("PG_HOST", "localhost", "User")
+[Environment]::SetEnvironmentVariable("PG_PORT", "5432", "User")
 ```
 
 ### 3. AWS Configuration
@@ -251,6 +326,34 @@ pg_isready -h localhost -p 5432
 tail -f /var/log/postgresql/postgresql-*.log
 ```
 
+#### Global Installation Issues
+```bash
+# Check if environment variables are set correctly
+echo $PG_USER
+echo $PG_HOST
+echo $PG_PORT
+
+# Test PostgreSQL connection with your credentials
+psql -h $PG_HOST -p $PG_PORT -U $PG_USER -c "SELECT version();"
+
+# If global installation can't find PostgreSQL credentials:
+# 1. Verify environment variables are set
+# 2. Try running with explicit environment variables:
+PG_USER=postgres PG_PASSWORD=yourpass PG_HOST=localhost PG_PORT=5432 db-restore
+```
+
+#### Environment Variable Troubleshooting
+```bash
+# Check all PostgreSQL-related environment variables
+env | grep PG_
+
+# For global installation, ensure variables persist across sessions
+# Add to your shell profile (.bashrc, .zshrc, etc.):
+echo 'export PG_USER=postgres' >> ~/.bashrc
+echo 'export PG_PASSWORD=your_password' >> ~/.bashrc
+source ~/.bashrc
+```
+
 #### AWS S3 Operations
 ```bash
 # List S3 buckets
@@ -333,11 +436,13 @@ cat ~/Library/DBeaverData/workspace6/General/.dbeaver/data-sources.json
 | Error | Cause | Solution |
 |-------|-------|----------|
 | `S3 bucket not accessible` | Missing AWS permissions | Check AWS profile and S3 permissions |
-| `PostgreSQL connection failed` | Database server down | Start PostgreSQL service |
+| `PostgreSQL connection failed` | Database server down or wrong credentials | Start PostgreSQL service, check PG_* environment variables |
 | `No backup files found` | Incorrect S3 path/prefix | Verify S3 bucket and service name |
 | `Backup extraction failed` | Corrupted file | Re-download backup file |
 | `Database creation failed` | Permission issues | Check user privileges |
 | `DBeaver integration failed` | Workspace not found | Manually specify DBeaver workspace path |
+| `Missing PostgreSQL credentials (global)` | Environment variables not set | Set PG_USER, PG_PASSWORD, PG_HOST, PG_PORT environment variables |
+| `dotenv config not found` | Global installation without env vars | Use environment variables instead of .env file |
 
 ### Performance Tips
 
@@ -400,12 +505,24 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 | `S3_BUCKET_DEV` | Yes* | - | Development S3 bucket |
 | `S3_BUCKET_STAGE` | Yes* | - | Staging S3 bucket |
 | `S3_BUCKET_PROD` | Yes* | - | Production S3 bucket |
-| `PG_USER` | No | postgres | PostgreSQL username |
+| `PG_USER` | **Yes*** | postgres | PostgreSQL username |
+| `PG_PASSWORD` | **Yes*** | - | PostgreSQL password |
 | `PG_HOST` | No | localhost | PostgreSQL host |
 | `PG_PORT` | No | 5432 | PostgreSQL port |
 | `LOCAL_TEMP_DIR` | No | /tmp/db-restore | Temporary directory |
 
-*Required only for S3 operations
+*Required only for S3 operations  
+**Required for global installation (strongly recommended for local installation)
+
+### Installation Method Comparison
+
+| Feature | Local Installation | Global Installation |
+|---------|-------------------|-------------------|
+| Configuration | `.env` file in project directory | Environment variables only |
+| Setup Complexity | Simple (copy .env.example) | Requires setting system env vars |
+| Portability | Project-specific settings | System-wide availability |
+| Updates | `git pull` and restart | Reinstall via npm |
+| Recommended for | Development, testing | Production use, system tools |
 
 ### Keyboard Shortcuts
 | Key | Action |
