@@ -693,10 +693,23 @@ tar -czf db-restore-cli-v1.0.0.tar.gz db-restore-cli-v1.0.0/
 zip -r db-restore-cli-v1.0.0.zip db-restore-cli-v1.0.0/
 ```
 
-#### 2. GitHub Releases
+#### 2. GitHub Releases - Step by Step Guide
 
-Create a release on GitHub with the built binaries:
+##### Step 1: Build Your Binaries
+```bash
+# First, build all binaries
+npm run build:all
 
+# Verify the build output
+ls -la build/
+# Should show:
+# db-restore-win.exe
+# db-restore-linux
+# db-restore-macos
+# db-restore-macos-arm64
+```
+
+##### Step 2: Prepare Release Files
 ```bash
 # Create release directory structure
 mkdir -p releases/v1.0.0
@@ -705,47 +718,289 @@ mkdir -p releases/v1.0.0
 cp build/db-restore-win.exe releases/v1.0.0/db-restore-windows-x64.exe
 cp build/db-restore-linux releases/v1.0.0/db-restore-linux-x64
 cp build/db-restore-macos releases/v1.0.0/db-restore-macos-x64
+cp build/db-restore-macos-arm64 releases/v1.0.0/db-restore-macos-arm64
 
 # Make Linux and macOS binaries executable
 chmod +x releases/v1.0.0/db-restore-linux-x64
 chmod +x releases/v1.0.0/db-restore-macos-x64
+chmod +x releases/v1.0.0/db-restore-macos-arm64
 
-# Create checksums
+# Create checksums for verification
 cd releases/v1.0.0
 sha256sum * > checksums.txt
+
+# Check file sizes and checksums
+ls -lah
+cat checksums.txt
 cd ../..
 ```
 
-Upload these files to a GitHub release with notes like:
+##### Step 3: Create GitHub Release (Web Interface)
+
+**Option A: Using GitHub Web Interface (Recommended for beginners)**
+
+1. **Go to your GitHub repository** in a web browser
+2. **Click on "Releases"** (on the right side of the repository page)
+3. **Click "Create a new release"** or "Draft a new release"
+4. **Fill in the release details:**
+   - **Tag version**: `v1.0.0` (this will create a new tag)
+   - **Release title**: `Database Restore CLI v1.0.0`
+   - **Describe this release**: Use the template below
+
+5. **Upload binary files:**
+   - Drag and drop OR click "Attach binaries by dropping them here or selecting them"
+   - Upload these files from `releases/v1.0.0/`:
+     - `db-restore-windows-x64.exe`
+     - `db-restore-linux-x64`
+     - `db-restore-macos-x64`
+     - `db-restore-macos-arm64`
+     - `checksums.txt`
+
+6. **Choose release type:**
+   - ✅ Check "Set as the latest release" (for stable releases)
+   - ⚠️ Check "Set as a pre-release" (for beta/test releases)
+
+7. **Click "Publish release"**
+
+##### Step 4: Release Description Template
+
+Copy this template for your release description:
 
 ```markdown
-## Download Instructions
+# Database Restore CLI v1.0.0
+
+A comprehensive interactive CLI tool for restoring PostgreSQL databases from S3 backups or local dump files.
+
+## 🚀 New Features
+- Interactive menu-driven interface
+- Support for multiple backup formats (SQL, tar.gz, custom dumps)
+- Automatic DBeaver integration
+- Multi-environment S3 support
+- Windows SCRAM authentication fixes
+
+## 📦 Download Instructions
+
+Choose the appropriate binary for your operating system:
 
 ### Windows
-Download: `db-restore-windows-x64.exe`
+📥 **Download**: [`db-restore-windows-x64.exe`](link-will-be-auto-generated)
+
+**Setup:**
 ```cmd
-# Set environment variables
+# Set environment variables (one-time setup)
 setx PG_USER postgres
-setx PG_PASSWORD your_password
+setx PG_PASSWORD your_postgres_password
+setx PG_HOST localhost
+setx PG_PORT 5432
 
 # Run the tool
 db-restore-windows-x64.exe
 ```
 
-### Linux/macOS
-Download: `db-restore-linux-x64` or `db-restore-macos-x64`
+### Linux
+📥 **Download**: [`db-restore-linux-x64`](link-will-be-auto-generated)
+
+**Setup:**
 ```bash
-# Make executable
+# Download and make executable
+wget https://github.com/Gohelraj/db-restore-cli/releases/download/v1.0.0/db-restore-linux-x64
 chmod +x db-restore-linux-x64
 
 # Set environment variables
 export PG_USER=postgres
-export PG_PASSWORD=your_password
+export PG_PASSWORD=your_postgres_password
 
 # Run the tool
 ./db-restore-linux-x64
 ```
+
+### macOS (Intel)
+📥 **Download**: [`db-restore-macos-x64`](link-will-be-auto-generated)
+
+### macOS (Apple Silicon)
+📥 **Download**: [`db-restore-macos-arm64`](link-will-be-auto-generated)
+
+**Setup for both macOS versions:**
+```bash
+# Download and make executable
+chmod +x db-restore-macos-*
+
+# Set environment variables
+export PG_USER=postgres
+export PG_PASSWORD=your_postgres_password
+
+# Run the tool
+./db-restore-macos-x64
+# or
+./db-restore-macos-arm64
 ```
+
+## 🔧 Prerequisites
+
+All platforms require:
+- **PostgreSQL client tools** (`psql`, `pg_restore`, `pg_isready`)
+- **AWS CLI** (for S3 operations) - `aws configure` must be set up
+- **PostgreSQL server** running and accessible
+
+## 📋 Quick Start
+
+1. Download the appropriate binary for your system
+2. Set the required environment variables (see platform-specific instructions above)
+3. Make sure PostgreSQL client tools are installed
+4. Run the binary and follow the interactive prompts
+
+## 🔍 File Verification
+
+Verify your download using the checksums:
+
+```bash
+# Download checksums file
+wget https://github.com/Gohelraj/db-restore-cli/releases/download/v1.0.0/checksums.txt
+
+# Verify file integrity (Linux/macOS)
+sha256sum -c checksums.txt
+
+# Verify file integrity (Windows PowerShell)
+Get-FileHash db-restore-windows-x64.exe -Algorithm SHA256
+```
+
+## 📖 Full Documentation
+
+For complete setup instructions, troubleshooting, and advanced usage, see the [README](https://github.com/Gohelraj/db-restore-cli/blob/main/README.md).
+
+## 🐛 Known Issues
+
+- Windows users may need to manually enter passwords in DBeaver connections
+- Requires PostgreSQL client tools to be in PATH
+- S3 operations require AWS CLI configuration
+
+## 🆘 Support
+
+If you encounter issues:
+1. Check the [troubleshooting section](https://github.com/Gohelraj/db-restore-cli/blob/main/README.md#-troubleshooting) in the README
+2. [Open an issue](https://github.com/Gohelraj/db-restore-cli/issues) with detailed error information
+3. Include your OS, PostgreSQL version, and error messages
+
+---
+
+**File Sizes:**
+- Windows: ~45MB
+- Linux: ~42MB  
+- macOS: ~43MB
+
+**SHA256 Checksums:** See `checksums.txt`
+```
+
+##### Step 5: Using GitHub CLI (Advanced Users)
+
+**Option B: Using GitHub CLI**
+
+```bash
+# Install GitHub CLI if not already installed
+# macOS: brew install gh
+# Linux: See https://cli.github.com/
+# Windows: Download from https://cli.github.com/
+
+# Login to GitHub
+gh auth login
+
+# Create release with files
+gh release create v1.0.0 \
+  releases/v1.0.0/db-restore-windows-x64.exe \
+  releases/v1.0.0/db-restore-linux-x64 \
+  releases/v1.0.0/db-restore-macos-x64 \
+  releases/v1.0.0/db-restore-macos-arm64 \
+  releases/v1.0.0/checksums.txt \
+  --title "Database Restore CLI v1.0.0" \
+  --notes-file release-notes.md
+
+# Or create release interactively
+gh release create v1.0.0 releases/v1.0.0/* --generate-notes
+```
+
+##### Step 6: Post-Release Tasks
+
+1. **Test the release:**
+   ```bash
+   # Download and test your own release
+   wget https://github.com/YOUR_USERNAME/db-restore-cli/releases/download/v1.0.0/db-restore-linux-x64
+   chmod +x db-restore-linux-x64
+   ./db-restore-linux-x64
+   ```
+
+2. **Update documentation:**
+   - Update README badges if you have them
+   - Add release to changelog
+   - Update installation instructions
+
+3. **Announce the release:**
+   - Share on social media
+   - Update project documentation
+   - Notify users/team members
+
+##### Automated Release Workflow (Optional)
+
+Create `.github/workflows/release.yml` for automatic releases:
+
+```yaml
+name: Release Binaries
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install pkg
+        run: npm install -g pkg
+
+      - name: Build binaries
+        run: npm run build:all
+
+      - name: Prepare release files
+        run: |
+          mkdir -p release-files
+          cp build/db-restore-win.exe release-files/db-restore-windows-x64.exe
+          cp build/db-restore-linux release-files/db-restore-linux-x64
+          cp build/db-restore-macos release-files/db-restore-macos-x64
+          cp build/db-restore-macos-arm64 release-files/db-restore-macos-arm64
+          cd release-files
+          sha256sum * > checksums.txt
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            release-files/db-restore-windows-x64.exe
+            release-files/db-restore-linux-x64
+            release-files/db-restore-macos-x64
+            release-files/db-restore-macos-arm64
+            release-files/checksums.txt
+          body: |
+            ## Database Restore CLI ${{ github.ref_name }}
+            
+            Standalone binaries for Windows, Linux, and macOS.
+            
+            See [README](https://github.com/${{ github.repository }}/blob/main/README.md) for setup instructions.
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+```
+
+This workflow will automatically create releases when you push a tag like `v1.0.0`.
 
 #### 3. Docker Distribution
 
