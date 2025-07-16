@@ -198,7 +198,18 @@ class DatabaseRestoreManager {
                 throw new Error('Dump file path is required');
             }
 
-            const resolvedPath = path.resolve(dumpPath.trim());
+            // Normalize the path for the current platform
+            let resolvedPath = dumpPath.trim();
+            
+            // If it's already an absolute path, use it as-is, otherwise resolve it
+            if (path.isAbsolute(resolvedPath)) {
+                // On Windows, normalize the path separators
+                if (PlatformUtils.isWindows()) {
+                    resolvedPath = path.normalize(resolvedPath);
+                }
+            } else {
+                resolvedPath = path.resolve(resolvedPath);
+            }
 
             // Check if file exists
             if (!fs.existsSync(resolvedPath)) {
@@ -331,14 +342,20 @@ class DatabaseRestoreManager {
             
             let extractCommand;
             if (tarCmd === '7z') {
-                // 7-Zip command for Windows
-                extractCommand = `7z x "${tarGzPath}" -so | 7z x -aoa -si -ttar -o"${extractDir}"`;
+                // 7-Zip command for Windows - use proper Windows path quoting
+                const normalizedInput = path.resolve(tarGzPath);
+                const normalizedOutput = path.resolve(extractDir);
+                extractCommand = `7z x "${normalizedInput}" -so | 7z x -aoa -si -ttar -o"${normalizedOutput}"`;
             } else {
-                // Standard tar command - use cross-platform approach
+                // Standard tar command - use absolute paths to avoid path issues
+                const absoluteTarPath = path.resolve(tarGzPath);
+                const absoluteExtractDir = path.resolve(extractDir);
+                
                 if (PlatformUtils.isWindows()) {
-                    extractCommand = `cd /d "${extractDir}" && ${tarCmd} -xzf "${tarGzPath}"`;
+                    // Use tar directly with absolute paths instead of cd
+                    extractCommand = `${tarCmd} -xzf "${absoluteTarPath}" -C "${absoluteExtractDir}"`;
                 } else {
-                    extractCommand = `cd "${extractDir}" && ${tarCmd} -xzf "${tarGzPath}"`;
+                    extractCommand = `cd "${absoluteExtractDir}" && ${tarCmd} -xzf "${absoluteTarPath}"`;
                 }
             }
             
@@ -359,14 +376,20 @@ class DatabaseRestoreManager {
             
             let extractCommand;
             if (tarCmd === '7z') {
-                // 7-Zip command for Windows
-                extractCommand = `7z x "${tarPath}" -o"${extractDir}"`;
+                // 7-Zip command for Windows - use proper Windows path quoting
+                const normalizedInput = path.resolve(tarPath);
+                const normalizedOutput = path.resolve(extractDir);
+                extractCommand = `7z x "${normalizedInput}" -o"${normalizedOutput}"`;
             } else {
-                // Standard tar command - use cross-platform approach
+                // Standard tar command - use absolute paths to avoid path issues
+                const absoluteTarPath = path.resolve(tarPath);
+                const absoluteExtractDir = path.resolve(extractDir);
+                
                 if (PlatformUtils.isWindows()) {
-                    extractCommand = `cd /d "${extractDir}" && ${tarCmd} -xf "${tarPath}"`;
+                    // Use tar directly with absolute paths instead of cd
+                    extractCommand = `${tarCmd} -xf "${absoluteTarPath}" -C "${absoluteExtractDir}"`;
                 } else {
-                    extractCommand = `cd "${extractDir}" && ${tarCmd} -xf "${tarPath}"`;
+                    extractCommand = `cd "${absoluteExtractDir}" && ${tarCmd} -xf "${absoluteTarPath}"`;
                 }
             }
             
