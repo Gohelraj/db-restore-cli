@@ -431,6 +431,62 @@ ls -la ~/Library/DBeaverData/workspace6/General/.dbeaver/
 cat ~/Library/DBeaverData/workspace6/General/.dbeaver/data-sources.json
 ```
 
+#### 6. Windows DBeaver SCRAM Authentication Error
+If you encounter "The server requested SCRAM-based authentication, but no password was provided" error in DBeaver on Windows:
+
+**Quick Fix:**
+1. Open DBeaver
+2. Right-click on the connection created by the tool
+3. Select "Edit Connection"
+4. Go to "Main" tab and enter your PostgreSQL password
+5. Click "Test Connection" to verify
+6. Click "OK" to save
+
+**Alternative Solutions:**
+
+**Method 1: Manual Password Entry (Recommended)**
+```
+1. In DBeaver, find the restored database connection
+2. Double-click to connect (it will prompt for password)
+3. Enter your PostgreSQL password
+4. Check "Save password" if you want it remembered
+5. Click "OK"
+```
+
+**Method 2: Edit Connection Properties**
+```
+1. Right-click connection → Properties
+2. Go to Connection Settings → Main
+3. Enter password in "Password" field
+4. Check "Save password locally"
+5. Apply changes
+```
+
+**Method 3: Windows Environment Variable Setup**
+```cmd
+# Set PostgreSQL password environment variable
+setx PGPASSWORD your_postgres_password
+
+# Restart DBeaver after setting this
+```
+
+**Method 4: Configure PostgreSQL for Trust Authentication (Development Only)**
+```bash
+# Edit pg_hba.conf file (usually in PostgreSQL data directory)
+# Change the authentication method from 'scram-sha-256' to 'trust' for localhost
+# Find line like:
+host    all             all             127.0.0.1/32            scram-sha-256
+
+# Change to:
+host    all             all             127.0.0.1/32            trust
+
+# Restart PostgreSQL service
+net stop postgresql-x64-14
+net start postgresql-x64-14
+```
+
+**⚠️ Security Note:** Method 4 removes password authentication for localhost connections. Only use this for development environments.
+
 ### Error Codes and Solutions
 
 | Error | Cause | Solution |
@@ -443,6 +499,8 @@ cat ~/Library/DBeaverData/workspace6/General/.dbeaver/data-sources.json
 | `DBeaver integration failed` | Workspace not found | Manually specify DBeaver workspace path |
 | `Missing PostgreSQL credentials (global)` | Environment variables not set | Set PG_USER, PG_PASSWORD, PG_HOST, PG_PORT environment variables |
 | `dotenv config not found` | Global installation without env vars | Use environment variables instead of .env file |
+| `SCRAM authentication error in DBeaver (Windows)` | Password not saved in DBeaver connection | Manually enter password in DBeaver connection settings |
+| `DBeaver connection created but password required` | Tool doesn't store passwords in DBeaver | Right-click connection → Edit Connection → Enter password |
 
 ### Performance Tips
 
