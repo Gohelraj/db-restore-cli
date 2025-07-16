@@ -520,6 +520,341 @@ aws configure set max_concurrent_requests 1 --profile dev
 aws configure set max_bandwidth 50MB/s --profile dev
 ```
 
+## 📦 Building and Distribution
+
+### Creating Standalone Binaries
+
+You can create standalone executable binaries that others can use without installing Node.js. This is useful for distributing the tool to team members or deploying to production servers.
+
+#### Prerequisites for Building
+
+```bash
+# Install pkg globally
+npm install -g pkg
+
+# Or use npx (no global installation needed)
+npx pkg --version
+```
+
+#### Quick Build Commands
+
+```bash
+# Clone and prepare the project
+git clone https://github.com/Gohelraj/db-restore-cli.git
+cd db-restore-cli
+npm install
+
+# Build for current platform
+npx pkg . --output ./build/db-restore
+
+# Build for all major platforms
+npx pkg . --targets latest-win-x64,latest-linux-x64,latest-macos-x64 --output ./build/db-restore
+```
+
+#### Platform-Specific Builds
+
+```bash
+# Windows (64-bit)
+npx pkg . --targets latest-win-x64 --output ./build/db-restore-win.exe
+
+# Linux (64-bit)
+npx pkg . --targets latest-linux-x64 --output ./build/db-restore-linux
+
+# macOS (64-bit)
+npx pkg . --targets latest-macos-x64 --output ./build/db-restore-macos
+
+# All platforms at once
+npx pkg . --targets latest-win-x64,latest-linux-x64,latest-macos-x64 --out-path ./build/
+```
+
+#### Advanced Build Configuration
+
+Add this to your `package.json` for more control:
+
+```json
+{
+  "name": "database-restore-manager",
+  "version": "1.0.0",
+  "bin": {
+    "db-restore": "./restore.js"
+  },
+  "pkg": {
+    "scripts": [
+      "restore.js",
+      "config.js"
+    ],
+    "assets": [
+      ".env.example"
+    ],
+    "targets": [
+      "latest-win-x64",
+      "latest-linux-x64",
+      "latest-macos-x64"
+    ],
+    "outputPath": "build"
+  }
+}
+```
+
+Then simply run:
+```bash
+npx pkg .
+```
+
+#### Build Script for package.json
+
+Add these scripts to `package.json`:
+
+```json
+{
+  "scripts": {
+    "build": "pkg . --out-path ./build/",
+    "build:win": "pkg . --targets latest-win-x64 --output ./build/db-restore-win.exe",
+    "build:linux": "pkg . --targets latest-linux-x64 --output ./build/db-restore-linux",
+    "build:macos": "pkg . --targets latest-macos-x64 --output ./build/db-restore-macos",
+    "build:all": "npm run build:win && npm run build:linux && npm run build:macos"
+  }
+}
+```
+
+Then use:
+```bash
+npm run build:all
+```
+
+### Distribution Guide
+
+#### 1. Prepare Distribution Package
+
+```bash
+# Create distribution directory
+mkdir -p dist/db-restore-cli-v1.0.0
+
+# Copy binaries
+cp build/db-restore-* dist/db-restore-cli-v1.0.0/
+
+# Copy documentation and examples
+cp README.md dist/db-restore-cli-v1.0.0/
+cp .env.example dist/db-restore-cli-v1.0.0/
+
+# Create setup instructions
+cat > dist/db-restore-cli-v1.0.0/SETUP.md << 'EOF'
+# Database Restore CLI - Setup Instructions
+
+## Prerequisites
+- PostgreSQL client tools (psql, pg_restore, pg_isready)
+- AWS CLI (for S3 operations)
+
+## Quick Start
+1. Set environment variables for PostgreSQL:
+   - PG_USER=postgres
+   - PG_PASSWORD=your_password
+   - PG_HOST=localhost
+   - PG_PORT=5432
+
+2. Run the appropriate binary for your system:
+   - Windows: db-restore-win.exe
+   - Linux: ./db-restore-linux
+   - macOS: ./db-restore-macos
+
+## Full Documentation
+See README.md for complete setup and usage instructions.
+EOF
+
+# Create archive
+cd dist
+tar -czf db-restore-cli-v1.0.0.tar.gz db-restore-cli-v1.0.0/
+zip -r db-restore-cli-v1.0.0.zip db-restore-cli-v1.0.0/
+```
+
+#### 2. GitHub Releases
+
+Create a release on GitHub with the built binaries:
+
+```bash
+# Create release directory structure
+mkdir -p releases/v1.0.0
+
+# Copy binaries with descriptive names
+cp build/db-restore-win.exe releases/v1.0.0/db-restore-windows-x64.exe
+cp build/db-restore-linux releases/v1.0.0/db-restore-linux-x64
+cp build/db-restore-macos releases/v1.0.0/db-restore-macos-x64
+
+# Make Linux and macOS binaries executable
+chmod +x releases/v1.0.0/db-restore-linux-x64
+chmod +x releases/v1.0.0/db-restore-macos-x64
+
+# Create checksums
+cd releases/v1.0.0
+sha256sum * > checksums.txt
+cd ../..
+```
+
+Upload these files to a GitHub release with notes like:
+
+```markdown
+## Download Instructions
+
+### Windows
+Download: `db-restore-windows-x64.exe`
+```cmd
+# Set environment variables
+setx PG_USER postgres
+setx PG_PASSWORD your_password
+
+# Run the tool
+db-restore-windows-x64.exe
+```
+
+### Linux/macOS
+Download: `db-restore-linux-x64` or `db-restore-macos-x64`
+```bash
+# Make executable
+chmod +x db-restore-linux-x64
+
+# Set environment variables
+export PG_USER=postgres
+export PG_PASSWORD=your_password
+
+# Run the tool
+./db-restore-linux-x64
+```
+```
+
+#### 3. Docker Distribution
+
+Create a Dockerfile for containerized distribution:
+
+```dockerfile
+# Dockerfile
+FROM node:18-alpine
+
+# Install PostgreSQL client tools
+RUN apk add --no-cache postgresql-client aws-cli
+
+# Create app directory
+WORKDIR /app
+
+# Copy application files
+COPY package*.json ./
+RUN npm ci --only=production
+
+COPY restore.js config.js ./
+
+# Create non-root user
+RUN addgroup -g 1001 -S dbuser && \
+    adduser -S dbuser -u 1001
+
+USER dbuser
+
+ENTRYPOINT ["node", "restore.js"]
+```
+
+Build and distribute:
+```bash
+# Build Docker image
+docker build -t db-restore-cli:latest .
+
+# Create distributable image
+docker save db-restore-cli:latest > db-restore-cli-docker.tar
+
+# Or push to registry
+docker tag db-restore-cli:latest yourusername/db-restore-cli:latest
+docker push yourusername/db-restore-cli:latest
+```
+
+### Important Distribution Notes
+
+#### 1. **Dependencies Requirements**
+The binary includes Node.js runtime and your application code, but users still need:
+- PostgreSQL client tools (`psql`, `pg_restore`, `pg_isready`)
+- AWS CLI (for S3 operations)
+- Network access to PostgreSQL and S3
+
+#### 2. **Environment Variables**
+Since binaries can't use local `.env` files, users must set environment variables:
+```bash
+# Required for PostgreSQL access
+PG_USER=postgres
+PG_PASSWORD=your_password
+PG_HOST=localhost
+PG_PORT=5432
+
+# Optional for S3 operations
+S3_BUCKET_DEV=your-dev-bucket
+S3_BUCKET_STAGE=your-stage-bucket
+S3_BUCKET_PROD=your-prod-bucket
+```
+
+#### 3. **File Paths and Permissions**
+- Ensure temporary directory permissions
+- Consider different path separators (Windows vs Unix)
+- Test file extraction on target platforms
+
+#### 4. **Testing Distribution**
+```bash
+# Test on clean systems
+# Windows
+db-restore-windows-x64.exe
+
+# Linux (test on different distributions)
+./db-restore-linux-x64
+
+# macOS
+./db-restore-macos-x64
+```
+
+### Alternative Distribution Methods
+
+#### 1. **NPM Global Package** (Requires Node.js)
+```bash
+# Publish to npm (if public)
+npm publish
+
+# Users install with:
+npm install -g database-restore-manager
+```
+
+#### 2. **Homebrew (macOS/Linux)**
+Create a Homebrew formula for easy installation.
+
+#### 3. **Windows Package Manager**
+Submit to winget or chocolatey for Windows users.
+
+#### 4. **AppImage (Linux)**
+Create a portable AppImage for Linux distribution.
+
+### Build Automation
+
+Create a GitHub Action for automated builds:
+
+```yaml
+# .github/workflows/build.yml
+name: Build Binaries
+on:
+  push:
+    tags: ['v*']
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+      
+      - run: npm ci
+      - run: npm install -g pkg
+      
+      - run: pkg . --targets latest-win-x64,latest-linux-x64,latest-macos-x64 --out-path ./build/
+      
+      - uses: actions/upload-artifact@v3
+        with:
+          name: binaries
+          path: build/
+```
+
 ## 🤝 Contributing
 
 1. Fork the repository
