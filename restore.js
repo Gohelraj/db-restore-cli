@@ -1077,6 +1077,12 @@ Please check if this is a valid PostgreSQL backup file.`);
         // Set PGPASSWORD if a password is configured
         if (CONFIG.postgres.password) {
             env.PGPASSWORD = CONFIG.postgres.password;
+        } else if (process.env.PGPASSWORD) {
+            // Use existing PGPASSWORD from environment
+            env.PGPASSWORD = process.env.PGPASSWORD;
+        } else {
+            // Set empty password to avoid prompts for trust authentication
+            env.PGPASSWORD = '';
         }
         
         return env;
@@ -1416,10 +1422,7 @@ Please check if this is a valid PostgreSQL backup file.`);
             }
 
             let restoreCommand;
-            const env = {
-                PGPASSWORD: process.env.PGPASSWORD || '',
-                ...process.env
-            };
+            const env = this.getPostgresEnv();
 
             switch (format) {
                 case 'sql':
@@ -1527,10 +1530,7 @@ Please check if this is a valid PostgreSQL backup file.`);
             console.log('\n🔍 Verifying restoration...');
 
             const baseOptions = `-h ${CONFIG.postgres.host} -p ${CONFIG.postgres.port} -U ${CONFIG.postgres.user}`;
-            const env = {
-                PGPASSWORD: process.env.PGPASSWORD || '',
-                ...process.env
-            };
+            const env = this.getPostgresEnv();
 
             // Test basic connectivity first
             try {
@@ -2605,10 +2605,7 @@ Please check if this is a valid PostgreSQL backup file.`);
                 try {
                     execSync(altCommand, {
                         stdio: 'inherit',
-                        env: {
-                            PGPASSWORD: process.env.PGPASSWORD || '',
-                            ...process.env
-                        }
+                        env: this.getPostgresEnv()
                     });
                     console.log('✅ Alternative restore method succeeded');
                     return;
@@ -2625,10 +2622,7 @@ Please check if this is a valid PostgreSQL backup file.`);
                 try {
                     execSync(altCommand, {
                         stdio: 'inherit',
-                        env: {
-                            PGPASSWORD: process.env.PGPASSWORD || '',
-                            ...process.env
-                        }
+                        env: this.getPostgresEnv()
                     });
                     console.log('✅ Alternative restore method succeeded');
                     return;
@@ -2640,10 +2634,7 @@ Please check if this is a valid PostgreSQL backup file.`);
                         const minimalCommand = `pg_restore -h ${CONFIG.postgres.host} -p ${CONFIG.postgres.port} -U ${CONFIG.postgres.user} -d ${this.targetDatabase} --no-owner --no-privileges "${filePath}"`;
                         execSync(minimalCommand, {
                             stdio: 'inherit',
-                            env: {
-                                PGPASSWORD: process.env.PGPASSWORD || '',
-                                ...process.env
-                            }
+                            env: this.getPostgresEnv()
                         });
                         console.log('✅ Minimal restore method succeeded');
                         return;
