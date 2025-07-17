@@ -44,7 +44,7 @@ A comprehensive interactive CLI tool for restoring PostgreSQL databases from S3 
 ## 📋 Requirements
 
 ### System Requirements
-- **Node.js** 14.x or higher
+- **Node.js** 18.x or higher
 - **PostgreSQL** 12.x or higher
 - **AWS CLI** (for S3 operations)
 - **tar/gzip** utilities (usually pre-installed)
@@ -60,6 +60,7 @@ A comprehensive interactive CLI tool for restoring PostgreSQL databases from S3 
 - Valid AWS credentials for each environment
 
 ## 🛠️ Installation
+Requires **Node.js 18** or higher.
 
 ### Option 1: Global Installation
 

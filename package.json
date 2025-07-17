@@ -1,52 +1,55 @@
 {
-    "name": "database-restore-manager",
-    "version": "1.0.0",
-    "description": "Interactive database restore tool for S3 backups",
-    "main": "restore.js",
-    "bin": {
-        "db-restore": "./restore.js"
-    },
-    "scripts": {
-        "start": "node restore.js",
-        "install-global": "npm install -g .",
-        "build": "pkg . --targets node18-win-x64,node18-linux-x64,node18-macos-x64,node18-macos-arm64 --out-path ./build/",
-        "build:win": "pkg . --targets node18-win-x64 --output ./build/db-restore-win.exe",
-        "build:linux": "pkg . --targets node18-linux-x64 --output ./build/db-restore-linux",
-        "build:macos": "pkg . --targets node18-macos-x64 --output ./build/db-restore-macos",
-        "build:macos-arm": "pkg . --targets node18-macos-arm64 --output ./build/db-restore-macos-arm64",
-        "build:all": "npm run build:win && npm run build:linux && npm run build:macos && npm run build:macos-arm"
-    },
-    "pkg": {
-        "scripts": [
-            "restore.js",
-            "config.js"
-        ],
-        "assets": [
-            ".env.example"
-        ],
-        "targets": [
-            "node18-win-x64",
-            "node18-linux-x64",
-            "node18-macos-x64",
-            "node18-macos-arm64"
-        ],
-        "outputPath": "build"
-    },
-    "dependencies": {
-        "aws-sdk": "^2.1498.0",
-        "dotenv": "^17.2.0",
-        "keypress": "^0.2.1"
-    },
-    "keywords": [
-        "database",
-        "restore",
-        "s3",
-        "postgresql",
-        "backup",
-        "cli",
-        "binary",
-        "standalone"
+  "name": "database-restore-manager",
+  "version": "1.0.0",
+  "description": "Interactive database restore tool for S3 backups",
+  "main": "restore.js",
+  "bin": {
+    "db-restore": "./restore.js"
+  },
+  "scripts": {
+    "start": "node restore.js",
+    "install-global": "npm install -g .",
+    "build": "pkg . --targets node18-win-x64,node18-linux-x64,node18-macos-x64,node18-macos-arm64 --out-path ./build/",
+    "build:win": "pkg . --targets node18-win-x64 --output ./build/db-restore-win.exe",
+    "build:linux": "pkg . --targets node18-linux-x64 --output ./build/db-restore-linux",
+    "build:macos": "pkg . --targets node18-macos-x64 --output ./build/db-restore-macos",
+    "build:macos-arm": "pkg . --targets node18-macos-arm64 --output ./build/db-restore-macos-arm64",
+    "build:all": "npm run build:win && npm run build:linux && npm run build:macos && npm run build:macos-arm"
+  },
+  "pkg": {
+    "scripts": [
+      "restore.js",
+      "config.js"
     ],
-    "author": "Raj Gohel",
-    "license": "MIT"
+    "assets": [
+      ".env.example"
+    ],
+    "targets": [
+      "node18-win-x64",
+      "node18-linux-x64",
+      "node18-macos-x64",
+      "node18-macos-arm64"
+    ],
+    "outputPath": "build"
+  },
+  "dependencies": {
+    "aws-sdk": "^2.1498.0",
+    "dotenv": "^17.2.0",
+    "keypress": "^0.2.1"
+  },
+  "keywords": [
+    "database",
+    "restore",
+    "s3",
+    "postgresql",
+    "backup",
+    "cli",
+    "binary",
+    "standalone"
+  ],
+  "author": "Raj Gohel",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  }
 }
