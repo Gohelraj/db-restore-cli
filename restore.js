@@ -1359,7 +1359,7 @@ Please check if this is a valid PostgreSQL backup file.`);
                     header.includes('CREATE') ||
                     header.includes('INSERT') ||
                     header.includes('SET ') ||
-                    header.includes('\\connect') ||
+                    header.includes('\connect') ||
                     header.includes('BEGIN;')) {
                     return 'sql';
                 }
