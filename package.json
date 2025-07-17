@@ -2,12 +2,12 @@
   "name": "database-restore-manager",
   "version": "1.0.0",
   "description": "Interactive database restore tool for S3 backups",
-  "main": "restore.js",
+  "main": "index.js",
   "bin": {
-    "db-restore": "./restore.js"
+    "db-restore": "./index.js"
   },
   "scripts": {
-    "start": "node restore.js",
+    "start": "node index.js",
     "install-global": "npm install -g .",
     "build": "pkg . --targets node18-win-x64,node18-linux-x64,node18-macos-x64,node18-macos-arm64 --out-path ./build/",
     "build:win": "pkg . --targets node18-win-x64 --output ./build/db-restore-win.exe",
@@ -18,7 +18,7 @@
   },
   "pkg": {
     "scripts": [
-      "restore.js",
+      "index.js",
       "config.js"
     ],
     "assets": [
@@ -47,6 +47,16 @@
     "binary",
     "standalone"
   ],
+  "assets": [
+    ".env.example"
+  ],
+  "targets": [
+    "node18-win-x64",
+    "node18-linux-x64",
+    "node18-macos-x64",
+    "node18-macos-arm64"
+  ],
+  "outputPath": "build",
   "author": "Raj Gohel",
   "license": "MIT",
   "engines": {

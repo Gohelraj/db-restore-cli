@@ -124,7 +124,7 @@ npm install
 # Run directly
 npm start
 # or
-node restore.js
+node index.js
 ```
 
 ## ⚙️ Configuration
@@ -508,7 +508,7 @@ net start postgresql-x64-14
 #### Large Backup Files
 ```bash
 # Increase Node.js memory limit
-node --max-old-space-size=4096 restore.js
+node --max-old-space-size=4096 index.js
 
 # Use faster temporary directory
 export LOCAL_TEMP_DIR=/dev/shm/db-restore  # RAM disk on Linux
@@ -601,11 +601,11 @@ Add this to your `package.json` for more control:
   "name": "database-restore-manager",
   "version": "1.0.0",
   "bin": {
-    "db-restore": "./restore.js"
+    "db-restore": "./index.js"
   },
   "pkg": {
     "scripts": [
-      "restore.js",
+      "index.js",
       "config.js"
     ],
     "assets": [
@@ -1021,7 +1021,7 @@ WORKDIR /app
 COPY package*.json ./
 RUN npm ci --only=production
 
-COPY restore.js config.js ./
+COPY index.js config.js ./
 
 # Create non-root user
 RUN addgroup -g 1001 -S dbuser && \
@@ -1029,7 +1029,7 @@ RUN addgroup -g 1001 -S dbuser && \
 
 USER dbuser
 
-ENTRYPOINT ["node", "restore.js"]
+ENTRYPOINT ["node", "index.js"]
 ```
 
 Build and distribute:

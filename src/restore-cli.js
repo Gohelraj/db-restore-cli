@@ -7,113 +7,10 @@ const AWS = require('aws-sdk');
 const os = require('os');
 const crypto = require('crypto');
 
-// Load configuration from external file
-const CONFIG = require('./config.js');
-
-// Cross-platform utility class
-class PlatformUtils {
-    static isWindows() {
-        return process.platform === 'win32';
-    }
-
-    static isLinux() {
-        return process.platform === 'linux';
-    }
-
-    static isMacOS() {
-        return process.platform === 'darwin';
-    }
-
-    static getCommandPath(command) {
-        if (this.isWindows()) {
-            // On Windows, these commands might have .exe extension or be in specific paths
-            const extensions = ['', '.exe', '.cmd', '.bat'];
-            for (const ext of extensions) {
-                try {
-                    execSync(`where ${command}${ext}`, { stdio: 'pipe' });
-                    return command + ext;
-                } catch (e) {
-                    // Continue searching
-                }
-            }
-        }
-        return command; // Unix/Linux
-    }
-
-    static getTarCommand() {
-        if (this.isWindows()) {
-            // Windows 10+ has built-in tar, but check for alternatives
-            try {
-                execSync('tar --version', { stdio: 'pipe' });
-                return 'tar';
-            } catch (e) {
-                // Fallback to 7-zip if available
-                try {
-                    execSync('7z', { stdio: 'pipe' });
-                    return '7z';
-                } catch (e2) {
-                    throw new Error('No suitable archive extraction tool found. Please install 7-Zip or use Windows 10+ built-in tar.');
-                }
-            }
-        }
-        return 'tar';
-    }
-
-    static getRemoveCommand(dirPath) {
-        if (this.isWindows()) {
-            return `rmdir /s /q "${dirPath}"`;
-        }
-        return `rm -rf "${dirPath}"`;
-    }
-
-    static getGunzipCommand(inputPath, outputPath) {
-        if (this.isWindows()) {
-            // Try PowerShell first, then 7-Zip
-            const powershellCmd = `powershell -Command "& {$input = [System.IO.File]::OpenRead('${inputPath.replace(/\\/g, '\\\\')}'); $gzip = New-Object System.IO.Compression.GzipStream($input, [System.IO.Compression.CompressionMode]::Decompress); $output = [System.IO.File]::Create('${outputPath.replace(/\\/g, '\\\\')}'); $gzip.CopyTo($output); $gzip.Close(); $output.Close(); $input.Close()}"`;
-
-            // Test if PowerShell is available and supports compression
-            try {
-                execSync('powershell -Command "Get-Command Expand-Archive"', { stdio: 'pipe' });
-                return powershellCmd;
-            } catch (e) {
-                // Fallback to 7-Zip
-                return `7z x "${inputPath}" -o"${path.dirname(outputPath)}"`;
-            }
-        }
-        return `gunzip -c "${inputPath}" > "${outputPath}"`;
-    }
-
-    static validatePostgreSQLTools() {
-        const tools = ['psql', 'pg_restore', 'pg_isready'];
-        const missing = [];
-
-        for (const tool of tools) {
-            try {
-                const cmd = this.getCommandPath(tool);
-                execSync(`${cmd} --version`, { stdio: 'pipe' });
-            } catch (e) {
-                missing.push(tool);
-            }
-        }
-
-        if (missing.length > 0) {
-            const platform = this.isWindows() ? 'Windows' : this.isLinux() ? 'Linux' : 'macOS';
-            let installMsg = '';
-
-            if (this.isWindows()) {
-                installMsg = 'Please install PostgreSQL and ensure tools are in PATH, or download from https://www.postgresql.org/download/windows/';
-            } else if (this.isLinux()) {
-                installMsg = 'Please install postgresql-client: sudo apt-get install postgresql-client (Debian/Ubuntu) or sudo yum install postgresql (RHEL/CentOS)';
-            } else {
-                installMsg = 'Please install PostgreSQL: brew install postgresql';
-            }
-
-            throw new Error(`Missing PostgreSQL tools on ${platform}: ${missing.join(', ')}.\n${installMsg}`);
-        }
-
-        return true;
-    }
-}
+const CONFIG = require('../config.js');
+const PlatformUtils = require('./platform-utils');
+const AWSService = require('./aws-service');
+const DBeaverManager = require('./dbeaver');
 
 // Extend CONFIG with runtime properties
 Object.assign(CONFIG, {
@@ -154,6 +51,8 @@ class DatabaseRestoreManager {
         this.localDumpPath = null;
         this.extractedDbFile = null;
         this.cleanupDone = false;
+        this.awsService = new AWSService();
+        this.dbeaverManager = new DBeaverManager();
     }
 
     async selectSourceType() {
@@ -662,95 +561,18 @@ class DatabaseRestoreManager {
 
     // Initialize AWS S3 client with selected profile
     async initializeS3() {
-        try {
-            console.log('\n🔧 Initializing AWS S3 connection...');
-
-            const credentials = new AWS.SharedIniFileCredentials({
-                profile: CONFIG.selectedProfile
-            });
-
-            AWS.config.credentials = credentials;
-
-            // Use environment-specific region
-            const region = CONFIG.aws.regions[CONFIG.selectedEnvironment];
-            if (!region) {
-                throw new Error(`No AWS region configured for environment: ${CONFIG.selectedEnvironment}`);
-            }
-            AWS.config.region = region;
-
-            this.s3 = new AWS.S3();
-
-            await this.s3.headBucket({ Bucket: CONFIG.s3Bucket }).promise();
-            console.log(`✅ S3 connection successful (Profile: ${CONFIG.selectedProfile}, Region: ${region}, Bucket: ${CONFIG.s3Bucket})`);
-
-        } catch (error) {
-            if (error.code === 'NoSuchBucket') {
-                throw new Error(`S3 bucket '${CONFIG.s3Bucket}' does not exist or is not accessible with profile '${CONFIG.selectedProfile}'`);
-            } else if (error.code === 'Forbidden') {
-                throw new Error(`Access denied to S3 bucket '${CONFIG.s3Bucket}' with profile '${CONFIG.selectedProfile}'`);
-            } else if (error.code === 'CredentialsError') {
-                throw new Error(`Invalid credentials for AWS profile '${CONFIG.selectedProfile}'`);
-            } else {
-                throw new Error(`Failed to initialize S3: ${error.message}`);
-            }
-        }
+        await this.awsService.initialize();
+        this.s3 = this.awsService.s3;
     }
 
     // List all services (directories) in S3
     async listServices() {
-        try {
-            console.log('\n📁 Fetching available services...');
-
-            const params = {
-                Bucket: CONFIG.s3Bucket,
-                Delimiter: '/',
-                Prefix: ''
-            };
-
-            const result = await this.s3.listObjectsV2(params).promise();
-            const services = result.CommonPrefixes.map(prefix =>
-                prefix.Prefix.replace('/', '')
-            );
-
-            if (services.length === 0) {
-                throw new Error(`No services found in the S3 bucket '${CONFIG.s3Bucket}'`);
-            }
-
-            return services.sort();
-        } catch (error) {
-            throw new Error(`Failed to list services: ${error.message}`);
-        }
+        return this.awsService.listServices();
     }
 
     // List backup files for a specific service
     async listBackupFiles(serviceName) {
-        try {
-            console.log(`\n📋 Fetching backup files for service: ${serviceName}...`);
-
-            const params = {
-                Bucket: CONFIG.s3Bucket,
-                Prefix: `${serviceName}/`
-            };
-
-            const result = await this.s3.listObjectsV2(params).promise();
-            const backupFiles = result.Contents
-                .filter(obj => obj.Key.endsWith('.tar.gz') || obj.Key.endsWith('.tar'))
-                .map(obj => ({
-                    key: obj.Key,
-                    filename: path.basename(obj.Key),
-                    lastModified: obj.LastModified,
-                    size: this.formatFileSize(obj.Size)
-                }))
-                .sort((a, b) => new Date(b.lastModified) - new Date(a.lastModified));
-
-            if (backupFiles.length === 0) {
-                throw new Error(`No backup files found for service: ${serviceName} in ${CONFIG.selectedEnvironment.toUpperCase()} environment`);
-            }
-
-            return backupFiles;
-        } catch (error) {
-            throw new Error(`Failed to list backup files: ${error.message}`);
-        }
+        return this.awsService.listBackupFiles(serviceName);
     }
 
     // Format file size in human readable format
@@ -768,35 +590,7 @@ class DatabaseRestoreManager {
 
     // Download backup file from S3
     async downloadBackupFile(s3Key) {
-        try {
-            const filename = path.basename(s3Key);
-            const localPath = path.join(CONFIG.app.localTempDir, filename);
-
-            console.log(`\n⬇️  Downloading ${filename} from ${CONFIG.selectedEnvironment.toUpperCase()}...`);
-
-            if (!fs.existsSync(CONFIG.app.localTempDir)) {
-                fs.mkdirSync(CONFIG.app.localTempDir, { recursive: true });
-            }
-
-            const params = {
-                Bucket: CONFIG.s3Bucket,
-                Key: s3Key
-            };
-
-            const headResult = await this.s3.headObject(params).promise();
-            const totalSize = headResult.ContentLength;
-
-            console.log(`📁 File size: ${this.formatFileSize(totalSize)}`);
-
-            const data = await this.s3.getObject(params).promise();
-            fs.writeFileSync(localPath, data.Body);
-
-            console.log('✅ Download completed');
-            return localPath;
-
-        } catch (error) {
-            throw new Error(`Failed to download backup file: ${error.message}`);
-        }
+        return this.awsService.downloadBackup(s3Key, CONFIG.app.localTempDir);
     }
 
     // Handle direct compressed SQL files
@@ -1766,107 +1560,7 @@ Please check if this is a valid PostgreSQL backup file.`);
     }
 
     async detectDbeaverPaths() {
-        try {
-            console.log('\n🔍 Detecting DBeaver configuration...');
-
-            const homeDir = os.homedir();
-            const possiblePaths = [];
-
-            // Common DBeaver workspace locations
-            if (process.platform === 'darwin') { // macOS
-                possiblePaths.push(
-                    path.join(homeDir, 'Library', 'DBeaverData', 'workspace6'),
-                    path.join(homeDir, 'Documents', 'DBeaver', 'workspace6'),
-                    path.join(homeDir, '.dbeaver', 'workspace6')
-                );
-            } else if (process.platform === 'win32') { // Windows
-                possiblePaths.push(
-                    path.join(homeDir, 'AppData', 'Roaming', 'DBeaverData', 'workspace6'),
-                    path.join(homeDir, 'Documents', 'DBeaver', 'workspace6')
-                );
-            } else { // Linux
-                possiblePaths.push(
-                    path.join(homeDir, '.local', 'share', 'DBeaverData', 'workspace6'),
-                    path.join(homeDir, '.dbeaver', 'workspace6'),
-                    path.join(homeDir, 'Documents', 'DBeaver', 'workspace6')
-                );
-            }
-
-            // Find existing workspace and check for the correct data-sources.json location
-            for (const workspacePath of possiblePaths) {
-                if (fs.existsSync(workspacePath)) {
-                    // Check the correct location: workspace/General/.dbeaver/data-sources.json
-                    const dataSourcesPath = path.join(workspacePath, 'General', '.dbeaver', 'data-sources.json');
-                    const credentialsPath = path.join(workspacePath, 'General', '.dbeaver', 'credentials-config.json');
-
-                    // Check if the General/.dbeaver directory exists
-                    const dbeaverDir = path.dirname(dataSourcesPath);
-                    if (fs.existsSync(dbeaverDir)) {
-                        CONFIG.dbeaver.workspaceDir = workspacePath;
-                        CONFIG.dbeaver.dataSourcesFile = dataSourcesPath;
-                        CONFIG.dbeaver.credentialsFile = credentialsPath;
-
-                        console.log(`✅ Found DBeaver workspace: ${workspacePath}`);
-                        console.log(`📁 Data sources file: ${dataSourcesPath}`);
-                        console.log(`📄 File exists: ${fs.existsSync(dataSourcesPath) ? 'Yes' : 'Will be created'}`);
-                        return true;
-                    }
-                }
-            }
-
-            console.log('⚠️  DBeaver workspace not found automatically');
-            console.log('🔍 Checking for manual path...');
-
-            // Try to find any workspace with General/.dbeaver structure
-            for (const workspacePath of possiblePaths) {
-                if (fs.existsSync(workspacePath)) {
-                    console.log(`📂 Found workspace: ${workspacePath}`);
-
-                    // List directories to help debug
-                    try {
-                        const dirs = fs.readdirSync(workspacePath);
-                        console.log(`   Contents: ${dirs.join(', ')}`);
-
-                        // Check if General directory exists
-                        const generalPath = path.join(workspacePath, 'General');
-                        if (fs.existsSync(generalPath)) {
-                            const generalContents = fs.readdirSync(generalPath);
-                            console.log(`   General contents: ${generalContents.join(', ')}`);
-
-                            const dbeaverPath = path.join(generalPath, '.dbeaver');
-                            if (fs.existsSync(dbeaverPath)) {
-                                const dbeaverContents = fs.readdirSync(dbeaverPath);
-                                console.log(`   .dbeaver contents: ${dbeaverContents.join(', ')}`);
-                            }
-                        }
-                    } catch (err) {
-                        console.log(`   Error reading directory: ${err.message}`);
-                    }
-                }
-            }
-
-            const manualPath = await this.prompt('Enter DBeaver workspace path (or press Enter to skip): ');
-
-            if (manualPath.trim()) {
-                const dataSourcesPath = path.join(manualPath.trim(), 'General', '.dbeaver', 'data-sources.json');
-                if (fs.existsSync(path.dirname(dataSourcesPath))) {
-                    CONFIG.dbeaver.workspaceDir = manualPath.trim();
-                    CONFIG.dbeaver.dataSourcesFile = dataSourcesPath;
-                    CONFIG.dbeaver.credentialsFile = path.join(manualPath.trim(), 'General', '.dbeaver', 'credentials-config.json');
-                    console.log('✅ DBeaver workspace path set manually');
-                    console.log(`📁 Using: ${dataSourcesPath}`);
-                    return true;
-                } else {
-                    console.log('❌ Invalid DBeaver workspace path - General/.dbeaver not found');
-                    return false;
-                }
-            }
-
-            return false;
-        } catch (error) {
-            console.warn(`Warning: Could not detect DBeaver: ${error.message}`);
-            return false;
-        }
+        return this.dbeaverManager.detectPaths();
     }
 
 
@@ -1890,37 +1584,7 @@ Please check if this is a valid PostgreSQL backup file.`);
     }
 
     async readDbeaverDataSources() {
-        try {
-            console.log(`📖 Reading from: ${CONFIG.dbeaver.dataSourcesFile}`);
-
-            if (!fs.existsSync(CONFIG.dbeaver.dataSourcesFile)) {
-                // Create default data-sources.json if it doesn't exist
-                const defaultDataSources = {
-                    "folders": {},
-                    "connections": {}
-                };
-
-                // Create directory if it doesn't exist
-                const dir = path.dirname(CONFIG.dbeaver.dataSourcesFile);
-                if (!fs.existsSync(dir)) {
-                    console.log(`📁 Creating directory: ${dir}`);
-                    fs.mkdirSync(dir, { recursive: true });
-                }
-
-                fs.writeFileSync(CONFIG.dbeaver.dataSourcesFile, JSON.stringify(defaultDataSources, null, '\t'));
-                console.log(`📄 Created new data-sources.json file`);
-                return defaultDataSources;
-            }
-
-            const content = fs.readFileSync(CONFIG.dbeaver.dataSourcesFile, 'utf8');
-            const parsed = JSON.parse(content);
-            console.log(`✅ Successfully read data-sources.json`);
-            console.log(`   Existing connections: ${Object.keys(parsed.connections || {}).length}`);
-            console.log(`   Existing folders: ${Object.keys(parsed.folders || {}).length}`);
-            return parsed;
-        } catch (error) {
-            throw new Error(`Failed to read DBeaver data sources: ${error.message}`);
-        }
+        return this.dbeaverManager.readDataSources();
     }
 
     async showDbeaverDebugInfo() {
@@ -1957,123 +1621,10 @@ Please check if this is a valid PostgreSQL backup file.`);
     }
 
     async addDbeaverConnection(dbName) {
-        try {
-            console.log('\n🔗 Adding DBeaver connection...');
-
-            // Show debug info first
-            await this.showDbeaverDebugInfo();
-
-            const connectionId = this.generateConnectionId();
-            const connectionName = this.generateConnectionName(dbName);
-
-            // Read existing data sources
-            let dataSources = await this.readDbeaverDataSources();
-
-            // Initialize connections object if it doesn't exist
-            if (!dataSources.connections) {
-                dataSources.connections = {};
-            }
-
-            // Check if connection already exists
-            const existingConnectionId = Object.keys(dataSources.connections).find(id =>
-                dataSources.connections[id].configuration &&
-                dataSources.connections[id].configuration.database === dbName
-            );
-
-            if (existingConnectionId) {
-                console.log('⚠️  Connection for this database already exists in DBeaver');
-                const replaceChoice = await this.prompt('Replace existing connection? (y/n): ');
-                if (replaceChoice.toLowerCase() !== 'y') {
-                    console.log('⏭️  Skipping DBeaver connection creation');
-                    return;
-                }
-
-                // Remove existing connection
-                delete dataSources.connections[existingConnectionId];
-            }
-
-            // Determine the appropriate folder
-            const folderName = this.selectedDbeaverFolder || this.getDbeaverFolderName();
-
-            // Create new connection object matching your exact structure
-            const newConnection = {
-                "provider": "postgresql",
-                "driver": "postgres-jdbc",
-                "name": connectionName,
-                "save-password": true,
-                "folder": folderName,
-                "configuration": {
-                    "host": CONFIG.postgres.host,
-                    "port": CONFIG.postgres.port.toString(),
-                    "database": dbName,
-                    "url": `jdbc:postgresql://${CONFIG.postgres.host}:${CONFIG.postgres.port}/${dbName}`,
-                    "configurationType": "MANUAL",
-                    "type": "dev",
-                    "closeIdleConnection": true,
-                    "provider-properties": {
-                        "@dbeaver-show-non-default-db@": "false",
-                        "@dbeaver-chosen-role@": ""
-                    },
-                    "auth-model": "native",
-                    "user": CONFIG.postgres.user,
-                    "password": CONFIG.postgres.password,
-                }
-            };
-
-            // Generate connection ID in DBeaver format
-            const dbeaverConnectionId = `postgres-jdbc-${this.generateDbeaverConnectionId()}`;
-
-            // Add new connection to data sources
-            dataSources.connections[dbeaverConnectionId] = newConnection;
-
-            // Ensure the folder exists
-            await this.ensureDbeaverFolder(dataSources, folderName);
-
-            // Backup original file
-            if (fs.existsSync(CONFIG.dbeaver.dataSourcesFile)) {
-                const backupFile = CONFIG.dbeaver.dataSourcesFile + '.backup.' + Date.now();
-                fs.copyFileSync(CONFIG.dbeaver.dataSourcesFile, backupFile);
-                console.log(`📋 DBeaver config backed up to: ${backupFile}`);
-            }
-
-            // Write updated data sources with proper formatting
-            console.log(`💾 Writing to: ${CONFIG.dbeaver.dataSourcesFile}`);
-            fs.writeFileSync(CONFIG.dbeaver.dataSourcesFile, JSON.stringify(dataSources, null, '\t'));
-
-            // Verify the file was written correctly
-            const verification = fs.readFileSync(CONFIG.dbeaver.dataSourcesFile, 'utf8');
-            const verifyParsed = JSON.parse(verification);
-
-            if (verifyParsed.connections[dbeaverConnectionId]) {
-                console.log('✅ DBeaver connection added and verified successfully');
-                console.log(`   Connection Name: ${connectionName}`);
-                console.log(`   Connection ID: ${dbeaverConnectionId}`);
-                console.log(`   Database: ${dbName}`);
-                console.log(`   Folder: ${folderName}`);
-                console.log(`   File Location: ${CONFIG.dbeaver.dataSourcesFile}`);
-                console.log(`   Environment: ${CONFIG.selectedEnvironment.toUpperCase()}`);
-                console.log('');
-                console.log('📝 To see the new connection in DBeaver:');
-                console.log('   1. Refresh DBeaver (F5) or File → Refresh');
-                console.log('   2. Or restart DBeaver completely');
-                console.log('   3. Look for the connection in the appropriate folder');
-            } else {
-                throw new Error('Connection verification failed - not found in saved file');
-            }
-
-            return dbeaverConnectionId;
-
-        } catch (error) {
-            throw new Error(`Failed to add DBeaver connection: ${error.message}`);
-        }
+        const folderName = this.selectedDbeaverFolder || this.getDbeaverFolderName();
+        return this.dbeaverManager.addConnection(dbName, folderName);
     }
 
-    generateDbeaverConnectionId() {
-        // Generate ID similar to: 18e8bc78595-44edc145c752932c
-        const timestamp = Date.now().toString(16);
-        const random = crypto.randomBytes(8).toString('hex');
-        return `${timestamp}-${random}`;
-    }
 
     getDbeaverFolderName() {
         if (this.sourceType === 'local') {
@@ -2094,21 +1645,7 @@ Please check if this is a valid PostgreSQL backup file.`);
     }
 
     async ensureDbeaverFolder(dataSources, folderName) {
-        try {
-            // Initialize folders if they don't exist
-            if (!dataSources.folders) {
-                dataSources.folders = {};
-            }
-
-            // Add folder if it doesn't exist (matching your empty object structure)
-            if (!dataSources.folders[folderName]) {
-                dataSources.folders[folderName] = {};
-                console.log(`📁 Created DBeaver folder: ${folderName}`);
-            }
-
-        } catch (error) {
-            console.warn(`Warning: Could not ensure DBeaver folder: ${error.message}`);
-        }
+        this.dbeaverManager.ensureFolder(dataSources, folderName);
     }
 
     supportCustomMetadata() {
