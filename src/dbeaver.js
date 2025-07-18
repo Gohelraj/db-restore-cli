@@ -21,6 +21,7 @@ class DBeaverManager {
             );
         } else {
             possible.push(
+                path.join(homeDir, 'snap', 'dbeaver-ce', 'current', '.local', 'share', 'DBeaverData', 'workspace6'),
                 path.join(homeDir, '.local', 'share', 'DBeaverData', 'workspace6'),
                 path.join(homeDir, '.dbeaver', 'workspace6'),
                 path.join(homeDir, 'Documents', 'DBeaver', 'workspace6')
