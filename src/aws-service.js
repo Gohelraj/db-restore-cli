@@ -30,7 +30,7 @@ class AWSService {
         const params = { Bucket: CONFIG.s3Bucket, Prefix: `${serviceName}/` };
         const result = await this.s3.listObjectsV2(params).promise();
         return result.Contents
-            .filter(o => o.Key.endsWith('.tar.gz') || o.Key.endsWith('.tar'))
+            .filter(o => o.Key.endsWith('.tar.gz') || o.Key.endsWith('.tar') || o.Key.endsWith('.sql.gz'))
             .map(o => ({
                 key: o.Key,
                 filename: path.basename(o.Key),

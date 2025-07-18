@@ -250,17 +250,17 @@ class DatabaseRestoreManager {
                 // 7-Zip command for Windows - use proper Windows path quoting
                 const normalizedInput = path.resolve(tarGzPath);
                 const normalizedOutput = path.resolve(extractDir);
-                extractCommand = `7z x "${normalizedInput}" -so | 7z x -aoa -si -ttar -o"${normalizedOutput}"`;
+                extractCommand = `7z x ${PlatformUtils.escapeShellArg(normalizedInput)} -so | 7z x -aoa -si -ttar -o${PlatformUtils.escapeShellArg(normalizedOutput)}`;
             } else {
-                // Standard tar command - use absolute paths to avoid path issues
+                // Standard tar command - use absolute paths with proper escaping
                 const absoluteTarPath = path.resolve(tarGzPath);
                 const absoluteExtractDir = path.resolve(extractDir);
 
                 if (PlatformUtils.isWindows()) {
                     // Use tar directly with absolute paths instead of cd
-                    extractCommand = `${tarCmd} -xzf "${absoluteTarPath}" -C "${absoluteExtractDir}"`;
+                    extractCommand = `${tarCmd} -xzf ${PlatformUtils.escapeShellArg(absoluteTarPath)} -C ${PlatformUtils.escapeShellArg(absoluteExtractDir)}`;
                 } else {
-                    extractCommand = `cd "${absoluteExtractDir}" && ${tarCmd} -xzf "${absoluteTarPath}"`;
+                    extractCommand = `cd ${PlatformUtils.escapeShellArg(absoluteExtractDir)} && ${tarCmd} -xzf ${PlatformUtils.escapeShellArg(absoluteTarPath)}`;
                 }
             }
 
@@ -284,17 +284,17 @@ class DatabaseRestoreManager {
                 // 7-Zip command for Windows - use proper Windows path quoting
                 const normalizedInput = path.resolve(tarPath);
                 const normalizedOutput = path.resolve(extractDir);
-                extractCommand = `7z x "${normalizedInput}" -o"${normalizedOutput}"`;
+                extractCommand = `7z x ${PlatformUtils.escapeShellArg(normalizedInput)} -o${PlatformUtils.escapeShellArg(normalizedOutput)}`;
             } else {
-                // Standard tar command - use absolute paths to avoid path issues
+                // Standard tar command - use absolute paths with proper escaping
                 const absoluteTarPath = path.resolve(tarPath);
                 const absoluteExtractDir = path.resolve(extractDir);
 
                 if (PlatformUtils.isWindows()) {
                     // Use tar directly with absolute paths instead of cd
-                    extractCommand = `${tarCmd} -xf "${absoluteTarPath}" -C "${absoluteExtractDir}"`;
+                    extractCommand = `${tarCmd} -xf ${PlatformUtils.escapeShellArg(absoluteTarPath)} -C ${PlatformUtils.escapeShellArg(absoluteExtractDir)}`;
                 } else {
-                    extractCommand = `cd "${absoluteExtractDir}" && ${tarCmd} -xf "${absoluteTarPath}"`;
+                    extractCommand = `cd ${PlatformUtils.escapeShellArg(absoluteExtractDir)} && ${tarCmd} -xf ${PlatformUtils.escapeShellArg(absoluteTarPath)}`;
                 }
             }
 
@@ -611,7 +611,8 @@ class DatabaseRestoreManager {
                     fs.mkdirSync(extractDir, { recursive: true });
                 }
 
-                execSync(`gunzip -c "${filePath}" > "${extractedPath}"`, { stdio: 'pipe' });
+                const extractCommand = PlatformUtils.getGunzipCommand(filePath, extractedPath);
+                execSync(extractCommand, { stdio: 'pipe' });
 
                 return {
                     path: extractedPath,

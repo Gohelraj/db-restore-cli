@@ -53,6 +53,16 @@ class PlatformUtils {
         return `rm -rf "${dirPath}"`;
     }
 
+    static escapeShellArg(arg) {
+        if (this.isWindows()) {
+            // Windows cmd escaping - wrap in double quotes and escape internal quotes
+            return `"${arg.replace(/"/g, '""')}"`;
+        } else {
+            // Unix/Linux shell escaping - use single quotes and handle embedded single quotes
+            return `'${arg.replace(/'/g, "'\"'\"'")}'`;
+        }
+    }
+
     static getGunzipCommand(inputPath, outputPath) {
         if (this.isWindows()) {
             const powershellCmd = `powershell -Command "& {$input = [System.IO.File]::OpenRead('${inputPath.replace(/\\/g, '\\\\')}'); $gzip = New-Object System.IO.Compression.GzipStream($input, [System.IO.Compression.CompressionMode]::Decompress); $output = [System.IO.File]::Create('${outputPath.replace(/\\/g, '\\\\')}'); $gzip.CopyTo($output); $gzip.Close(); $output.Close(); $input.Close()}"`;
@@ -63,7 +73,7 @@ class PlatformUtils {
                 return `7z x "${inputPath}" -o"${path.dirname(outputPath)}"`;
             }
         }
-        return `gunzip -c "${inputPath}" > "${outputPath}"`;
+        return `gunzip -c ${this.escapeShellArg(inputPath)} > ${this.escapeShellArg(outputPath)}`;
     }
 
     static validatePostgreSQLTools() {
