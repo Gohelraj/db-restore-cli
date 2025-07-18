@@ -46,7 +46,6 @@ class DatabaseRestoreManager {
         this.targetDatabase = null;
         this.createNewDB = false;
         this.replaceExisting = false;
-        this.skipDBeaver = false;
         this.sourceType = null;
         this.localDumpPath = null;
         this.extractedDbFile = null;
@@ -1840,20 +1839,7 @@ Please check if this is a valid PostgreSQL backup file.`);
                 // Step 3: Initialize S3
                 await this.initializeS3();
 
-                // Step 4: Detect DBeaver (optional)
-                const dbeaverDetected = await this.detectDbeaverPaths();
-                if (dbeaverDetected) {
-                    await this.showExistingConnections();
-                } else {
-                    const skipChoice = await this.prompt('DBeaver not detected. Continue without DBeaver integration? (y/n): ');
-                    if (skipChoice.toLowerCase() !== 'y') {
-                        console.log('❌ Operation cancelled');
-                        return;
-                    }
-                    this.skipDBeaver = true;
-                }
-
-                // Step 5: Select Service
+                // Step 4: Select Service
                 const services = await this.listServices();
                 const serviceIndex = await this.selectFromMenu(
                     `📋 Available Services in ${CONFIG.selectedEnvironment.toUpperCase()}`,
@@ -1863,7 +1849,7 @@ Please check if this is a valid PostgreSQL backup file.`);
                 this.selectedService = services[serviceIndex];
                 console.log(`\n✅ Selected service: ${this.selectedService}`);
 
-                // Step 6: Select Backup File from S3
+                // Step 5: Select Backup File from S3
                 const backupFiles = await this.listBackupFiles(this.selectedService);
                 const backupOptions = backupFiles.map(backup =>
                     `${backup.filename} (${this.formatDate(backup.lastModified)}, ${backup.size})`
@@ -1879,20 +1865,7 @@ Please check if this is a valid PostgreSQL backup file.`);
 
             } else {
                 // Local file restoration flow
-                // Step 2: Detect DBeaver (optional)
-                const dbeaverDetected = await this.detectDbeaverPaths();
-                if (dbeaverDetected) {
-                    await this.showExistingConnections();
-                } else {
-                    const skipChoice = await this.prompt('DBeaver not detected. Continue without DBeaver integration? (y/n): ');
-                    if (skipChoice.toLowerCase() !== 'y') {
-                        console.log('❌ Operation cancelled');
-                        return;
-                    }
-                    this.skipDBeaver = true;
-                }
-
-                // Step 3: Select Local Dump File
+                // Step 2: Select Local Dump File
                 await this.selectLocalDumpFile();
 
                 // Set service name from filename for consistency
@@ -1900,7 +1873,7 @@ Please check if this is a valid PostgreSQL backup file.`);
                 console.log(`📋 Detected service: ${this.selectedService}`);
             }
 
-            // Step 7: Database Configuration (same for both flows)
+            // Step 3: Database Configuration (same for both flows)
             const dbOptions = [
                 'Create new database with date and environment suffix',
                 'Create new database with custom name',
@@ -1944,40 +1917,14 @@ Please check if this is a valid PostgreSQL backup file.`);
                     break;
             }
 
-            // Step 8: DBeaver Integration Option
-            if (!this.skipDBeaver) {
-                const dbeaverOptions = [
-                    'Add connection automatically (recommended folder)',
-                    'Add connection with folder selection',
-                    'Skip DBeaver integration'
-                ];
-
-                const dbeaverChoice = await this.selectFromMenu(
-                    '🔗 DBeaver Integration Options',
-                    dbeaverOptions
-                );
-
-                switch (dbeaverChoice) {
-                    case 1:
-                        this.customFolderSelection = true;
-                        break;
-                    case 2:
-                        this.skipDBeaver = true;
-                        break;
-                    default:
-                        this.customFolderSelection = false;
-                        break;
-                }
-            }
-
-            // Step 9: Verify PostgreSQL
+            // Step 4: Verify PostgreSQL
             console.log('\n🔍 Checking PostgreSQL connection...');
             if (!await this.checkPostgreSQL()) {
                 throw new Error(`PostgreSQL is not running or not accessible at ${CONFIG.postgres.host}:${CONFIG.postgres.port}`);
             }
             console.log('✅ PostgreSQL is running');
 
-            // Step 10: Database existence check
+            // Step 5: Database existence check
             const dbExists = await this.checkDatabaseExists(this.targetDatabase);
 
             if (this.replaceExisting && dbExists) {
@@ -1993,7 +1940,7 @@ Please check if this is a valid PostgreSQL backup file.`);
                 console.log(`\n📝 Database '${this.targetDatabase}' will be created automatically`);
             }
 
-            // Step 11: Confirm restore
+            // Step 6: Confirm restore
             console.log('\n📋 Restore Summary:');
             console.log('==================');
             console.log(`Source Type: ${this.sourceType.toUpperCase()}`);
@@ -2014,7 +1961,6 @@ Please check if this is a valid PostgreSQL backup file.`);
 
             console.log(`Target Database: ${this.targetDatabase}`);
             console.log(`Action: ${this.createNewDB ? 'Create new database' : 'Restore to existing database'}`);
-            console.log(`DBeaver Integration: ${this.skipDBeaver ? '❌ Disabled' : '✅ Enabled'}`);
 
             if (this.replaceExisting) {
                 console.log('⚠️  Warning: Existing database will be dropped and recreated');
@@ -2026,7 +1972,7 @@ Please check if this is a valid PostgreSQL backup file.`);
                 return;
             }
 
-            // Step 12: Execute restore
+            // Step 7: Execute restore
             console.log('\n🔄 Starting restore process...');
             console.log('==============================');
 
@@ -2086,20 +2032,62 @@ Please check if this is a valid PostgreSQL backup file.`);
                 }
             }
 
-            // Step 13: Add DBeaver connection
+            // Step 8: DBeaver Integration (after successful restoration)
             let dbeaverConnectionId = null;
-            if (!this.skipDBeaver) {
-                try {
-                    if (this.customFolderSelection) {
-                        const selectedFolder = await this.selectDbeaverFolder();
-                        this.selectedDbeaverFolder = selectedFolder;
+            console.log('\n🔗 DBeaver Integration');
+            console.log('======================');
+            
+            // Detect DBeaver paths
+            const dbeaverDetected = await this.detectDbeaverPaths();
+            if (dbeaverDetected) {
+                console.log('✅ DBeaver installation detected');
+                await this.showExistingConnections();
+                
+                const dbeaverOptions = [
+                    'Add connection automatically (recommended folder)',
+                    'Add connection with folder selection',
+                    'Skip DBeaver integration'
+                ];
+
+                const dbeaverChoice = await this.selectFromMenu(
+                    '🔗 DBeaver Integration Options',
+                    dbeaverOptions
+                );
+
+                let skipDBeaver = false;
+                let customFolderSelection = false;
+
+                switch (dbeaverChoice) {
+                    case 1:
+                        customFolderSelection = true;
+                        break;
+                    case 2:
+                        skipDBeaver = true;
+                        break;
+                    default:
+                        customFolderSelection = false;
+                        break;
+                }
+
+                if (!skipDBeaver) {
+                    try {
+                        if (customFolderSelection) {
+                            const selectedFolder = await this.selectDbeaverFolder();
+                            this.selectedDbeaverFolder = selectedFolder;
+                        }
+
+                        dbeaverConnectionId = await this.addDbeaverConnection(this.targetDatabase);
+                        await this.validateDbeaverConnection(dbeaverConnectionId);
+
+                    } catch (dbeaverError) {
+                        console.warn(`⚠️  DBeaver integration failed: ${dbeaverError.message}`);
+                        this.showManualDbeaverSetup();
                     }
-
-                    dbeaverConnectionId = await this.addDbeaverConnection(this.targetDatabase);
-                    await this.validateDbeaverConnection(dbeaverConnectionId);
-
-                } catch (dbeaverError) {
-                    console.warn(`⚠️  DBeaver integration failed: ${dbeaverError.message}`);
+                }
+            } else {
+                console.log('⚠️  DBeaver not detected on this system');
+                const installChoice = await this.prompt('Would you like to see manual DBeaver setup instructions? (y/n): ');
+                if (installChoice.toLowerCase() === 'y') {
                     this.showManualDbeaverSetup();
                 }
             }
@@ -2118,7 +2106,7 @@ Please check if this is a valid PostgreSQL backup file.`);
             console.log(`Database: ${this.targetDatabase}`);
             console.log(`Connection: psql -h ${CONFIG.postgres.host} -p ${CONFIG.postgres.port} -U ${CONFIG.postgres.user} -d ${this.targetDatabase}`);
 
-            if (!this.skipDBeaver && dbeaverConnectionId) {
+            if (dbeaverConnectionId) {
                 console.log(`\n🔗 DBeaver Integration:`);
                 console.log(`✅ Connection added successfully`);
                 console.log(`📁 Located in appropriate folder`);
