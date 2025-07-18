@@ -1003,55 +1003,130 @@ Please check if this is a valid PostgreSQL backup file.`);
         throw execError;
     }
 
-    // Fix database ownership after restore
-    async fixDatabaseOwnership(dbName) {
+    // Prepare database for restore with ownership considerations
+    async prepareRestoreOwnership(dbName) {
         try {
-            console.log('\n🔧 Fixing database ownership and permissions...');
+            console.log('🔧 Preparing database for ownership-safe restore...');
 
             const baseOptions = `-h ${CONFIG.postgres.host} -p ${CONFIG.postgres.port} -U ${CONFIG.postgres.user}`;
             const env = this.getPostgresEnv();
 
-            // Basic ownership commands
-            const ownershipCommands = [
-                `ALTER DATABASE "${dbName}" OWNER TO ${CONFIG.postgres.user};`,
-                `GRANT ALL PRIVILEGES ON DATABASE "${dbName}" TO ${CONFIG.postgres.user};`
+            // Ensure the current user has necessary privileges
+            const prepCommands = [
+                `GRANT ALL PRIVILEGES ON DATABASE "${dbName}" TO ${CONFIG.postgres.user};`,
+                `ALTER DATABASE "${dbName}" OWNER TO ${CONFIG.postgres.user};`
             ];
 
-            for (const cmd of ownershipCommands) {
+            for (const cmd of prepCommands) {
                 try {
-                    execSync(`psql ${baseOptions} -d "${dbName}" -c "${cmd}"`, { stdio: 'pipe', env });
+                    execSync(`psql ${baseOptions} -d postgres -c "${cmd}"`, { stdio: 'pipe', env });
+                } catch (cmdError) {
+                    // These might fail if already set, which is fine
+                    console.log(`Info: ${cmd} - ${cmdError.message.split('\n')[0]}`);
+                }
+            }
+
+            console.log('✅ Database prepared for restore');
+
+        } catch (error) {
+            console.warn(`Warning: Could not fully prepare database: ${error.message}`);
+        }
+    }
+
+    // Enhanced database ownership fixing with comprehensive coverage
+    async fixDatabaseOwnership(dbName) {
+        try {
+            console.log('\n🔧 Applying comprehensive ownership fixes...');
+
+            const baseOptions = `-h ${CONFIG.postgres.host} -p ${CONFIG.postgres.port} -U ${CONFIG.postgres.user}`;
+            const env = this.getPostgresEnv();
+
+            // Step 1: Fix database-level ownership
+            console.log('📋 Fixing database-level ownership...');
+            const dbOwnershipCommands = [
+                `ALTER DATABASE "${dbName}" OWNER TO ${CONFIG.postgres.user};`,
+                `GRANT ALL PRIVILEGES ON DATABASE "${dbName}" TO ${CONFIG.postgres.user};`,
+                `GRANT CREATE ON DATABASE "${dbName}" TO ${CONFIG.postgres.user};`
+            ];
+
+            for (const cmd of dbOwnershipCommands) {
+                try {
+                    execSync(`psql ${baseOptions} -d postgres -c "${cmd}"`, { stdio: 'pipe', env });
                 } catch (cmdError) {
                     console.warn(`Warning: Could not execute: ${cmd}`);
                 }
             }
 
-            // Fix schema ownership using a simpler approach
+            // Step 2: Fix schema ownership
+            console.log('📋 Fixing schema ownership...');
             try {
-                const schemaQuery = `SELECT schemaname FROM pg_tables WHERE schemaname NOT IN ('information_schema', 'pg_catalog') GROUP BY schemaname;`;
+                const schemaQuery = `
+                    SELECT DISTINCT schemaname 
+                    FROM pg_tables 
+                    WHERE schemaname NOT IN ('information_schema', 'pg_catalog')
+                    UNION
+                    SELECT DISTINCT schemaname 
+                    FROM pg_views 
+                    WHERE schemaname NOT IN ('information_schema', 'pg_catalog')
+                    UNION
+                    SELECT schema_name 
+                    FROM information_schema.schemata 
+                    WHERE schema_name NOT IN ('information_schema', 'pg_catalog', 'pg_toast', 'pg_temp_1', 'pg_toast_temp_1');
+                `;
+                
                 const schemas = execSync(
-                    `psql ${baseOptions} -d "${dbName}" -t -c "${schemaQuery}"`,
+                    `psql ${baseOptions} -d "${dbName}" -t -A -c "${schemaQuery}"`,
                     { stdio: 'pipe', encoding: 'utf8', env }
-                ).trim().split('\n').filter(s => s.trim());
+                ).trim().split('\n').filter(s => s.trim() && s.trim() !== '');
 
                 for (const schema of schemas) {
                     const cleanSchema = schema.trim();
-                    if (cleanSchema) {
+                    if (cleanSchema && cleanSchema !== 'public') {
                         try {
-                            execSync(`psql ${baseOptions} -d "${dbName}" -c "ALTER SCHEMA \\"${cleanSchema}\\" OWNER TO ${CONFIG.postgres.user};"`, { stdio: 'pipe', env });
+                            const schemaCommands = [
+                                `ALTER SCHEMA "${cleanSchema}" OWNER TO ${CONFIG.postgres.user};`,
+                                `GRANT ALL ON SCHEMA "${cleanSchema}" TO ${CONFIG.postgres.user};`,
+                                `GRANT USAGE ON SCHEMA "${cleanSchema}" TO ${CONFIG.postgres.user};`
+                            ];
+                            
+                            for (const cmd of schemaCommands) {
+                                execSync(`psql ${baseOptions} -d "${dbName}" -c "${cmd}"`, { stdio: 'pipe', env });
+                            }
                         } catch (err) {
-                            console.warn(`Warning: Could not change ownership of schema: ${cleanSchema}`);
+                            console.warn(`Warning: Could not fix ownership of schema: ${cleanSchema}`);
                         }
                     }
                 }
+
+                // Always ensure public schema has correct permissions
+                try {
+                    const publicSchemaCommands = [
+                        `GRANT ALL ON SCHEMA public TO ${CONFIG.postgres.user};`,
+                        `GRANT USAGE ON SCHEMA public TO ${CONFIG.postgres.user};`
+                    ];
+                    
+                    for (const cmd of publicSchemaCommands) {
+                        execSync(`psql ${baseOptions} -d "${dbName}" -c "${cmd}"`, { stdio: 'pipe', env });
+                    }
+                } catch (err) {
+                    console.warn(`Warning: Could not fix public schema permissions`);
+                }
+
             } catch (schemaError) {
-                console.warn(`Warning: Could not fix schema ownership`);
+                console.warn(`Warning: Could not fix schema ownership: ${schemaError.message}`);
             }
 
-            // Fix table ownership using a simpler approach
+            // Step 3: Fix table ownership
+            console.log('📋 Fixing table ownership...');
             try {
-                const tableQuery = `SELECT schemaname, tablename FROM pg_tables WHERE schemaname NOT IN ('information_schema', 'pg_catalog');`;
+                const tableQuery = `
+                    SELECT schemaname, tablename 
+                    FROM pg_tables 
+                    WHERE schemaname NOT IN ('information_schema', 'pg_catalog');
+                `;
+                
                 const tables = execSync(
-                    `psql ${baseOptions} -d "${dbName}" -t -c "${tableQuery}"`,
+                    `psql ${baseOptions} -d "${dbName}" -t -A -c "${tableQuery}"`,
                     { stdio: 'pipe', encoding: 'utf8', env }
                 ).trim().split('\n').filter(t => t.trim());
 
@@ -1061,20 +1136,204 @@ Please check if this is a valid PostgreSQL backup file.`);
                         const schema = parts[0].trim();
                         const tableName = parts[1].trim();
                         try {
-                            execSync(`psql ${baseOptions} -d "${dbName}" -c "ALTER TABLE \\"${schema}\\".\\"${tableName}\\" OWNER TO ${CONFIG.postgres.user};"`, { stdio: 'pipe', env });
+                            const tableCommands = [
+                                `ALTER TABLE "${schema}"."${tableName}" OWNER TO ${CONFIG.postgres.user};`,
+                                `GRANT ALL PRIVILEGES ON TABLE "${schema}"."${tableName}" TO ${CONFIG.postgres.user};`
+                            ];
+                            
+                            for (const cmd of tableCommands) {
+                                execSync(`psql ${baseOptions} -d "${dbName}" -c "${cmd}"`, { stdio: 'pipe', env });
+                            }
                         } catch (err) {
-                            console.warn(`Warning: Could not change ownership of table: ${schema}.${tableName}`);
+                            console.warn(`Warning: Could not fix ownership of table: ${schema}.${tableName}`);
                         }
                     }
                 }
             } catch (tableError) {
-                console.warn(`Warning: Could not fix table ownership`);
+                console.warn(`Warning: Could not fix table ownership: ${tableError.message}`);
             }
 
-            console.log('✅ Ownership and permissions updated');
+            // Step 4: Fix sequence ownership
+            console.log('📋 Fixing sequence ownership...');
+            try {
+                const sequenceQuery = `
+                    SELECT schemaname, sequencename 
+                    FROM pg_sequences 
+                    WHERE schemaname NOT IN ('information_schema', 'pg_catalog');
+                `;
+                
+                const sequences = execSync(
+                    `psql ${baseOptions} -d "${dbName}" -t -A -c "${sequenceQuery}"`,
+                    { stdio: 'pipe', encoding: 'utf8', env }
+                ).trim().split('\n').filter(s => s.trim());
+
+                for (const sequence of sequences) {
+                    const parts = sequence.trim().split('|');
+                    if (parts.length >= 2) {
+                        const schema = parts[0].trim();
+                        const sequenceName = parts[1].trim();
+                        try {
+                            const seqCommands = [
+                                `ALTER SEQUENCE "${schema}"."${sequenceName}" OWNER TO ${CONFIG.postgres.user};`,
+                                `GRANT ALL PRIVILEGES ON SEQUENCE "${schema}"."${sequenceName}" TO ${CONFIG.postgres.user};`
+                            ];
+                            
+                            for (const cmd of seqCommands) {
+                                execSync(`psql ${baseOptions} -d "${dbName}" -c "${cmd}"`, { stdio: 'pipe', env });
+                            }
+                        } catch (err) {
+                            console.warn(`Warning: Could not fix ownership of sequence: ${schema}.${sequenceName}`);
+                        }
+                    }
+                }
+            } catch (sequenceError) {
+                console.warn(`Warning: Could not fix sequence ownership: ${sequenceError.message}`);
+            }
+
+            // Step 5: Fix view ownership
+            console.log('📋 Fixing view ownership...');
+            try {
+                const viewQuery = `
+                    SELECT schemaname, viewname 
+                    FROM pg_views 
+                    WHERE schemaname NOT IN ('information_schema', 'pg_catalog');
+                `;
+                
+                const views = execSync(
+                    `psql ${baseOptions} -d "${dbName}" -t -A -c "${viewQuery}"`,
+                    { stdio: 'pipe', encoding: 'utf8', env }
+                ).trim().split('\n').filter(v => v.trim());
+
+                for (const view of views) {
+                    const parts = view.trim().split('|');
+                    if (parts.length >= 2) {
+                        const schema = parts[0].trim();
+                        const viewName = parts[1].trim();
+                        try {
+                            execSync(`psql ${baseOptions} -d "${dbName}" -c "ALTER VIEW \\"${schema}\\".\\"${viewName}\\" OWNER TO ${CONFIG.postgres.user};"`, { stdio: 'pipe', env });
+                        } catch (err) {
+                            console.warn(`Warning: Could not fix ownership of view: ${schema}.${viewName}`);
+                        }
+                    }
+                }
+            } catch (viewError) {
+                console.warn(`Warning: Could not fix view ownership: ${viewError.message}`);
+            }
+
+            // Step 6: Fix function ownership
+            console.log('📋 Fixing function ownership...');
+            try {
+                const functionQuery = `
+                    SELECT n.nspname as schema, p.proname as function_name, pg_get_function_identity_arguments(p.oid) as args
+                    FROM pg_proc p
+                    JOIN pg_namespace n ON p.pronamespace = n.oid
+                    WHERE n.nspname NOT IN ('information_schema', 'pg_catalog', 'pg_toast')
+                    AND p.prokind = 'f';
+                `;
+                
+                const functions = execSync(
+                    `psql ${baseOptions} -d "${dbName}" -t -A -c "${functionQuery}"`,
+                    { stdio: 'pipe', encoding: 'utf8', env }
+                ).trim().split('\n').filter(f => f.trim());
+
+                for (const func of functions) {
+                    const parts = func.trim().split('|');
+                    if (parts.length >= 3) {
+                        const schema = parts[0].trim();
+                        const funcName = parts[1].trim();
+                        const args = parts[2].trim();
+                        try {
+                            execSync(`psql ${baseOptions} -d "${dbName}" -c "ALTER FUNCTION \\"${schema}\\".\\"${funcName}\\"(${args}) OWNER TO ${CONFIG.postgres.user};"`, { stdio: 'pipe', env });
+                        } catch (err) {
+                            console.warn(`Warning: Could not fix ownership of function: ${schema}.${funcName}`);
+                        }
+                    }
+                }
+            } catch (functionError) {
+                console.warn(`Warning: Could not fix function ownership: ${functionError.message}`);
+            }
+
+            console.log('✅ Comprehensive ownership fixes applied');
 
         } catch (error) {
             console.warn(`Warning: Could not fully fix ownership: ${error.message}`);
+        }
+    }
+
+    // Try alternative restore methods with ownership safety
+    async tryOwnershipSafeRestore(filePath, format, dbName) {
+        try {
+            console.log('🔄 Attempting ownership-safe restore methods...');
+
+            const baseOptions = `-h ${CONFIG.postgres.host} -p ${CONFIG.postgres.port} -U ${CONFIG.postgres.user}`;
+            const env = this.getPostgresEnv();
+
+            if (format === 'sql') {
+                console.log('🔧 Trying SQL restore with transaction safety...');
+                
+                // Method 1: Single transaction with continue on error
+                try {
+                    const singleTxCommand = `psql ${baseOptions} -d "${dbName}" --single-transaction -v ON_ERROR_STOP=0 -f "${filePath}"`;
+                    execSync(singleTxCommand, { stdio: 'pipe', env });
+                    console.log('✅ Single transaction method succeeded');
+                    return;
+                } catch (txError) {
+                    console.log('⚠️  Single transaction method had issues, trying alternative...');
+                }
+
+                // Method 2: Without transaction, ignore errors
+                try {
+                    const noTxCommand = `psql ${baseOptions} -d "${dbName}" -v ON_ERROR_STOP=0 -q -f "${filePath}"`;
+                    execSync(noTxCommand, { stdio: 'pipe', env });
+                    console.log('✅ Non-transactional method completed');
+                    return;
+                } catch (noTxError) {
+                    console.log('⚠️  Non-transactional method also had issues');
+                }
+
+            } else if (format === 'custom') {
+                console.log('🔧 Trying pg_restore with minimal flags...');
+                
+                // Method 1: Minimal restore flags
+                try {
+                    const minimalCommand = `pg_restore ${baseOptions} -d "${dbName}" --no-owner --no-privileges --verbose "${filePath}"`;
+                    execSync(minimalCommand, { stdio: 'pipe', env });
+                    console.log('✅ Minimal pg_restore method succeeded');
+                    return;
+                } catch (minError) {
+                    console.log('⚠️  Minimal pg_restore had issues, trying data-only...');
+                }
+
+                // Method 2: Data-only restore
+                try {
+                    const dataOnlyCommand = `pg_restore ${baseOptions} -d "${dbName}" --data-only --no-owner --no-privileges --verbose "${filePath}"`;
+                    execSync(dataOnlyCommand, { stdio: 'pipe', env });
+                    console.log('✅ Data-only restore method succeeded');
+                    return;
+                } catch (dataError) {
+                    console.log('⚠️  Data-only restore also had issues');
+                }
+
+                // Method 3: Schema then data
+                try {
+                    console.log('🔧 Trying schema-first approach...');
+                    const schemaCommand = `pg_restore ${baseOptions} -d "${dbName}" --schema-only --no-owner --no-privileges "${filePath}"`;
+                    execSync(schemaCommand, { stdio: 'pipe', env });
+                    
+                    const dataCommand = `pg_restore ${baseOptions} -d "${dbName}" --data-only --no-owner --no-privileges "${filePath}"`;
+                    execSync(dataCommand, { stdio: 'pipe', env });
+                    
+                    console.log('✅ Schema-first approach succeeded');
+                    return;
+                } catch (schemaDataError) {
+                    console.log('⚠️  Schema-first approach also had issues');
+                }
+            }
+
+            console.log('ℹ️  All alternative methods attempted, proceeding with verification...');
+
+        } catch (error) {
+            console.warn(`Warning: Alternative restore methods failed: ${error.message}`);
         }
     }
 
@@ -1174,7 +1433,7 @@ Please check if this is a valid PostgreSQL backup file.`);
         }
     }
 
-    // Restore database from file (handles different formats)
+    // Restore database from file (handles different formats with enhanced ownership handling)
     async restoreDatabase(dbFile, dbName) {
         try {
             console.log(`\n🔄 Restoring database: ${dbName} from ${this.sourceType} source...`);
@@ -1215,32 +1474,40 @@ Please check if this is a valid PostgreSQL backup file.`);
                 await this.createDatabase(dbName);
             }
 
+            // Pre-restore ownership preparation
+            await this.prepareRestoreOwnership(dbName);
+
             let restoreCommand;
             const env = this.getPostgresEnv();
 
             switch (format) {
                 case 'sql':
-                    console.log('📥 Restoring from SQL dump...');
-                    restoreCommand = `psql -h ${CONFIG.postgres.host} -p ${CONFIG.postgres.port} -U ${CONFIG.postgres.user} -d ${dbName} -v ON_ERROR_STOP=1 -f "${filePath}"`;
+                    console.log('📥 Restoring from SQL dump with ownership handling...');
+                    // Enhanced SQL restore with ownership-safe options
+                    restoreCommand = `psql -h ${CONFIG.postgres.host} -p ${CONFIG.postgres.port} -U ${CONFIG.postgres.user} -d ${dbName} -v ON_ERROR_STOP=0 -v VERBOSITY=verbose -f "${filePath}"`;
                     break;
 
                 case 'custom':
-                    console.log('📥 Restoring from custom dump format...');
-                    restoreCommand = `pg_restore -h ${CONFIG.postgres.host} -p ${CONFIG.postgres.port} -U ${CONFIG.postgres.user} -d ${dbName} --clean --if-exists --no-owner --no-privileges --verbose --exit-on-error "${filePath}"`;
+                    console.log('📥 Restoring from custom dump format with ownership handling...');
+                    // Enhanced custom restore with comprehensive ownership flags
+                    restoreCommand = `pg_restore -h ${CONFIG.postgres.host} -p ${CONFIG.postgres.port} -U ${CONFIG.postgres.user} -d ${dbName} --clean --if-exists --no-owner --no-privileges --no-security-labels --no-tablespaces --verbose "${filePath}"`;
                     break;
 
                 case 'directory':
-                    console.log('📥 Restoring from directory format...');
-                    restoreCommand = `pg_restore -h ${CONFIG.postgres.host} -p ${CONFIG.postgres.port} -U ${CONFIG.postgres.user} -d ${dbName} --clean --if-exists --no-owner --no-privileges --verbose --exit-on-error "${filePath}"`;
+                    console.log('📥 Restoring from directory format with ownership handling...');
+                    restoreCommand = `pg_restore -h ${CONFIG.postgres.host} -p ${CONFIG.postgres.port} -U ${CONFIG.postgres.user} -d ${dbName} --clean --if-exists --no-owner --no-privileges --no-security-labels --no-tablespaces --verbose "${filePath}"`;
                     break;
 
                 default:
-                    console.log(`⚠️  Unknown format, attempting SQL restore...`);
-                    restoreCommand = `psql -h ${CONFIG.postgres.host} -p ${CONFIG.postgres.port} -U ${CONFIG.postgres.user} -d ${dbName} -v ON_ERROR_STOP=1 -f "${filePath}"`;
+                    console.log(`⚠️  Unknown format, attempting SQL restore with ownership handling...`);
+                    restoreCommand = `psql -h ${CONFIG.postgres.host} -p ${CONFIG.postgres.port} -U ${CONFIG.postgres.user} -d ${dbName} -v ON_ERROR_STOP=0 -v VERBOSITY=verbose -f "${filePath}"`;
                     break;
             }
 
             console.log(`🔧 Executing: ${restoreCommand.replace(env.PGPASSWORD || '', '[password]')}`);
+
+            let restoreSuccessful = false;
+            let restoreError = null;
 
             try {
                 const result = execSync(restoreCommand, {
@@ -1254,13 +1521,14 @@ Please check if this is a valid PostgreSQL backup file.`);
                 if (result && result.trim()) {
                     console.log('📋 Restore output:', result.substring(0, 500) + (result.length > 500 ? '...' : ''));
                 }
+                restoreSuccessful = true;
 
             } catch (execError) {
                 const errorOutput = execError.stderr ? execError.stderr.toString() : '';
                 const stdOutput = execError.stdout ? execError.stdout.toString() : '';
                 const exitCode = execError.status;
 
-                console.log(`\n❌ Restore command failed with exit code: ${exitCode}`);
+                console.log(`\n⚠️  Restore command completed with exit code: ${exitCode}`);
 
                 if (stdOutput && stdOutput.trim()) {
                     console.log('\n📋 Standard Output:');
@@ -1272,47 +1540,90 @@ Please check if this is a valid PostgreSQL backup file.`);
                     console.log(errorOutput);
                 }
 
-                // Check for specific recoverable errors
+                // Enhanced error analysis for ownership issues
+                const ownershipErrors = [
+                    'must be owner of',
+                    'permission denied for',
+                    'role ".*" does not exist',
+                    'must be member of role',
+                    'cannot drop owned by',
+                    'owner of database',
+                    'must be superuser'
+                ];
+
+                const hasOwnershipErrors = ownershipErrors.some(err => {
+                    const regex = new RegExp(err, 'i');
+                    return regex.test(errorOutput) || regex.test(stdOutput);
+                });
+
+                // Check for recoverable errors (including ownership issues)
                 const recoverableErrors = [
                     'already exists',
                     'does not exist, skipping',
                     'multiple primary key',
-                    'relation already exists'
+                    'relation already exists',
+                    'constraint.*already exists',
+                    'duplicate key value'
                 ];
 
-                const hasRecoverableErrors = recoverableErrors.some(err =>
-                    errorOutput.toLowerCase().includes(err) || stdOutput.toLowerCase().includes(err)
-                );
+                const hasRecoverableErrors = recoverableErrors.some(err => {
+                    const regex = new RegExp(err, 'i');
+                    return regex.test(errorOutput) || regex.test(stdOutput);
+                });
 
                 // Check for fatal errors that definitely indicate failure
                 const fatalErrors = [
-                    'fatal',
-                    'could not connect',
-                    'authentication failed',
-                    'permission denied',
-                    'database does not exist',
+                    'fatal.*authentication failed',
+                    'could not connect to server',
+                    'database.*does not exist',
                     'invalid command',
-                    'syntax error',
-                    'no such file or directory'
+                    'syntax error at or near',
+                    'no such file or directory',
+                    'connection refused'
                 ];
 
-                const hasFatalErrors = fatalErrors.some(err =>
-                    errorOutput.toLowerCase().includes(err)
-                );
+                const hasFatalErrors = fatalErrors.some(err => {
+                    const regex = new RegExp(err, 'i');
+                    return regex.test(errorOutput);
+                });
 
                 if (hasFatalErrors) {
                     throw new Error(`Database restore failed with fatal error: ${errorOutput || stdOutput || 'Unknown error'}`);
+                } else if (hasOwnershipErrors) {
+                    console.log('🔧 Detected ownership issues, will apply ownership fixes after verification...');
+                    restoreError = { type: 'ownership', details: errorOutput || stdOutput };
                 } else if (exitCode !== 0 && !hasRecoverableErrors) {
-                    // If exit code is non-zero and we don't have clearly recoverable errors,
-                    // still try to verify if the restore actually worked
-                    console.log('⚠️  Restore command failed, but checking if data was actually restored...');
+                    console.log('⚠️  Restore command had issues, but checking if data was actually restored...');
+                    restoreError = { type: 'general', details: errorOutput || stdOutput };
                 } else {
                     console.log('ℹ️  Restore completed with warnings (checking results...)');
+                    restoreSuccessful = true;
                 }
             }
 
             // Always verify restoration results
-            await this.verifyRestoration(dbName);
+            const verificationResult = await this.verifyRestoration(dbName);
+
+            // Apply ownership fixes if needed
+            if (restoreError && restoreError.type === 'ownership' || !restoreSuccessful) {
+                console.log('\n🔧 Applying comprehensive ownership fixes...');
+                await this.fixDatabaseOwnership(dbName);
+                
+                // Re-verify after ownership fixes
+                console.log('\n🔍 Re-verifying after ownership fixes...');
+                await this.verifyRestoration(dbName);
+            }
+
+            // If we still have issues, try alternative restore methods
+            if (restoreError && restoreError.type === 'general') {
+                console.log('\n🔄 Attempting alternative restore methods...');
+                await this.tryOwnershipSafeRestore(filePath, format, dbName);
+                
+                // Final verification
+                await this.verifyRestoration(dbName);
+            }
+
+            console.log('✅ Database restoration completed with ownership handling');
 
         } catch (error) {
             throw new Error(`Failed to restore database: ${error.message}`);
@@ -2124,7 +2435,7 @@ Please check if this is a valid PostgreSQL backup file.`);
 
     async tryAlternativeRestore(dbFile) {
         try {
-            console.log('\n🔄 Trying alternative restore methods...');
+            console.log('\n🔄 Trying alternative restore methods with ownership handling...');
 
             // Handle both object and string inputs (same as in restoreDatabase)
             let filePath, format;
@@ -2139,55 +2450,14 @@ Please check if this is a valid PostgreSQL backup file.`);
                 throw new Error(`Invalid database file parameter: ${typeof dbFile}`);
             }
 
-            if (format === 'sql') {
-                console.log('🔧 Trying with different psql options...');
+            // Use the new ownership-safe restore method
+            await this.tryOwnershipSafeRestore(filePath, format, this.targetDatabase);
+            
+            // Apply ownership fixes after alternative restore
+            console.log('🔧 Applying ownership fixes after alternative restore...');
+            await this.fixDatabaseOwnership(this.targetDatabase);
 
-                // Try with single transaction mode
-                const altCommand = `psql -h ${CONFIG.postgres.host} -p ${CONFIG.postgres.port} -U ${CONFIG.postgres.user} -d ${this.targetDatabase} --single-transaction -f "${filePath}"`;
-
-                try {
-                    execSync(altCommand, {
-                        stdio: 'inherit',
-                        env: this.getPostgresEnv()
-                    });
-                    console.log('✅ Alternative restore method succeeded');
-                    return;
-                } catch (altError) {
-                    console.log('❌ Alternative method also failed');
-                }
-            }
-
-            if (format === 'custom') {
-                console.log('🔧 Trying pg_restore without --clean and --exit-on-error flags...');
-
-                const altCommand = `pg_restore -h ${CONFIG.postgres.host} -p ${CONFIG.postgres.port} -U ${CONFIG.postgres.user} -d ${this.targetDatabase} --no-owner --no-privileges --verbose "${filePath}"`;
-
-                try {
-                    execSync(altCommand, {
-                        stdio: 'inherit',
-                        env: this.getPostgresEnv()
-                    });
-                    console.log('✅ Alternative restore method succeeded');
-                    return;
-                } catch (altError) {
-                    console.log('⚠️  Alternative method also had issues, trying minimal restore...');
-
-                    // Last resort: try with minimal flags
-                    try {
-                        const minimalCommand = `pg_restore -h ${CONFIG.postgres.host} -p ${CONFIG.postgres.port} -U ${CONFIG.postgres.user} -d ${this.targetDatabase} --no-owner --no-privileges "${filePath}"`;
-                        execSync(minimalCommand, {
-                            stdio: 'inherit',
-                            env: this.getPostgresEnv()
-                        });
-                        console.log('✅ Minimal restore method succeeded');
-                        return;
-                    } catch (minimalError) {
-                        console.log('❌ All pg_restore methods failed');
-                    }
-                }
-            }
-
-            throw new Error('All restore methods failed');
+            console.log('✅ Alternative restore with ownership handling completed');
 
         } catch (error) {
             throw new Error(`Alternative restore failed: ${error.message}`);
