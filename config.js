@@ -1,5 +1,7 @@
 // config.js - Centralized configuration
 require('dotenv').config();
+const path = require('path');
+const os = require('os');
 
 module.exports = {
     // Environment to S3 bucket mapping
@@ -30,8 +32,53 @@ module.exports = {
 
     // Application settings
     app: {
-        localTempDir: process.env.LOCAL_TEMP_DIR || require('path').join(require('os').tmpdir(), 'db-restore'),
+        localTempDir: process.env.LOCAL_TEMP_DIR || path.join(os.tmpdir(), 'db-restore'),
         supportedFormats: ['.tar.gz', '.tar'],
         maxRetries: parseInt(process.env.MAX_RETRIES) || 3
+    },
+
+    // DBeaver configuration with Ubuntu-specific settings
+    dbeaver: {
+        // Ubuntu-specific workspace detection paths
+        ubuntuWorkspacePaths: [
+            // Snap installation
+            path.join(os.homedir(), 'snap', 'dbeaver-ce', 'current', '.local', 'share', 'DBeaverData'),
+            path.join(os.homedir(), 'snap', 'dbeaver-ce', 'common', '.local', 'share', 'DBeaverData'),
+            
+            // Flatpak installation
+            path.join(os.homedir(), '.var', 'app', 'io.dbeaver.DBeaverCommunity', 'data', 'DBeaverData'),
+            path.join(os.homedir(), '.var', 'app', 'io.dbeaver.DBeaverCommunity', 'config', 'DBeaverData'),
+            
+            // Standard Linux paths
+            path.join(os.homedir(), '.local', 'share', 'DBeaverData'),
+            path.join(os.homedir(), '.dbeaver'),
+            path.join(os.homedir(), '.config', 'dbeaver')
+        ],
+        
+        // Folder naming preferences for Ubuntu
+        ubuntuFolderNames: {
+            local: "PostgreSQL - Local Restores",
+            dev: "PostgreSQL - Development", 
+            stage: "PostgreSQL - Staging",
+            prod: "PostgreSQL - Production"
+        },
+        
+        // Default folder names for other platforms
+        defaultFolderNames: {
+            local: "2.Postgres - LOCAL",
+            dev: "Postgres - 1.DEV",
+            stage: "Postgres - 2.STAGE", 
+            prod: "Postgres - 3.PROD"
+        },
+        
+        // Workspace detection settings
+        workspaceVersions: ['workspace6', 'workspace5', 'workspace4', '.metadata'],
+        configSubPaths: ['General/.dbeaver', '.dbeaver', ''],
+        
+        // Connection naming templates
+        connectionNameTemplates: {
+            local: '{dbName} [LOCAL] - Restored {date}',
+            cloud: '{dbName} [{backupDate}] - Restored {date} ({env})'
+        }
     }
 };
