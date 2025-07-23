@@ -1,5 +1,7 @@
 const { execSync } = require('child_process');
 const path = require('path');
+const fs = require('fs');
+const os = require('os');
 
 class PlatformUtils {
     static isWindows() {
@@ -12,6 +14,96 @@ class PlatformUtils {
 
     static isMacOS() {
         return process.platform === 'darwin';
+    }
+
+    static isUbuntu() {
+        if (!this.isLinux()) return false;
+        
+        try {
+            // Check /etc/os-release for Ubuntu
+            if (fs.existsSync('/etc/os-release')) {
+                const osRelease = fs.readFileSync('/etc/os-release', 'utf8');
+                return osRelease.toLowerCase().includes('ubuntu');
+            }
+            
+            // Fallback: check lsb_release command
+            const result = execSync('lsb_release -i', { stdio: 'pipe', encoding: 'utf8' });
+            return result.toLowerCase().includes('ubuntu');
+        } catch (error) {
+            // If we can't determine, assume it might be Ubuntu if it's Linux
+            return false;
+        }
+    }
+
+    static getUbuntuDistribution() {
+        if (!this.isUbuntu()) return null;
+        
+        try {
+            if (fs.existsSync('/etc/os-release')) {
+                const osRelease = fs.readFileSync('/etc/os-release', 'utf8');
+                const nameMatch = osRelease.match(/^NAME="([^"]+)"/m);
+                if (nameMatch) {
+                    return nameMatch[1];
+                }
+            }
+            
+            const result = execSync('lsb_release -d', { stdio: 'pipe', encoding: 'utf8' });
+            const match = result.match(/Description:\s*(.+)/);
+            return match ? match[1].trim() : 'Ubuntu';
+        } catch (error) {
+            return 'Ubuntu';
+        }
+    }
+
+    static detectDbeaverInstallationType() {
+        if (!this.isLinux()) return null;
+        
+        const homeDir = os.homedir();
+        const installationTypes = [];
+        
+        // Check for Snap installation
+        if (fs.existsSync(path.join(homeDir, 'snap', 'dbeaver-ce'))) {
+            installationTypes.push('snap');
+        }
+        
+        // Check for Flatpak installation
+        if (fs.existsSync(path.join(homeDir, '.var', 'app', 'io.dbeaver.DBeaverCommunity'))) {
+            installationTypes.push('flatpak');
+        }
+        
+        // Check for AppImage in common locations
+        const appImagePaths = [
+            path.join(homeDir, 'Applications'),
+            path.join(homeDir, '.local', 'share', 'applications'),
+            path.join(homeDir, 'Desktop'),
+            path.join(homeDir, 'Downloads')
+        ];
+        
+        for (const appPath of appImagePaths) {
+            if (fs.existsSync(appPath)) {
+                try {
+                    const files = fs.readdirSync(appPath);
+                    if (files.some(file => file.toLowerCase().includes('dbeaver') && file.endsWith('.AppImage'))) {
+                        installationTypes.push('appimage');
+                        break;
+                    }
+                } catch (error) {
+                    // Ignore read errors
+                }
+            }
+        }
+        
+        // Check for system-wide installation
+        if (fs.existsSync('/usr/share/dbeaver') || fs.existsSync('/opt/dbeaver')) {
+            installationTypes.push('system');
+        }
+        
+        // Check for manual installation in home directory
+        if (fs.existsSync(path.join(homeDir, 'dbeaver'))) {
+            installationTypes.push('manual');
+        }
+        
+        return installationTypes.length > 0 ? installationTypes : ['unknown'];
     }
 
     static getCommandPath(command) {

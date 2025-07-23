@@ -1883,12 +1883,23 @@ Please check if this is a valid PostgreSQL backup file.`);
         const timestamp = new Date().toISOString().split('T')[0];
 
         if (this.sourceType === 'local') {
+            // Ubuntu-friendly connection naming for local restores
+            if (PlatformUtils.isUbuntu()) {
+                const serviceName = this.getServiceFromLocalFile(this.selectedBackup?.filename || 'unknown');
+                return `${dbName} - Local Restore (${serviceName}) - ${timestamp}`;
+            }
             return `${dbName} [LOCAL] - Restored ${timestamp}`;
         } else {
             const envLabel = CONFIG.selectedEnvironment.toUpperCase();
             const backupDate = this.selectedBackup ?
                 this.selectedBackup.filename.match(/(\d{4}-\d{2}-\d{2})/) : null;
             const backupDateStr = backupDate ? `[${backupDate[1]}]` : '';
+
+            // Ubuntu-friendly connection naming for cloud restores
+            if (PlatformUtils.isUbuntu()) {
+                const envName = CONFIG.selectedEnvironment.charAt(0).toUpperCase() + CONFIG.selectedEnvironment.slice(1);
+                return `${dbName} - ${envName} ${backupDateStr} - Restored ${timestamp}`;
+            }
 
             return `${dbName} ${backupDateStr} - Restored ${timestamp} (${envLabel})`;
         }
@@ -1902,11 +1913,21 @@ Please check if this is a valid PostgreSQL backup file.`);
         try {
             console.log('\n🔍 DBeaver Debug Information:');
             console.log('============================');
-            console.log(`Workspace: ${CONFIG.dbeaver.workspaceDir}`);
-            console.log(`Data Sources File: ${CONFIG.dbeaver.dataSourcesFile}`);
-            console.log(`File Exists: ${fs.existsSync(CONFIG.dbeaver.dataSourcesFile) ? '✅ Yes' : '❌ No'}`);
+            
+            // Show platform-specific information
+            if (PlatformUtils.isUbuntu()) {
+                console.log(`Platform: Ubuntu (${PlatformUtils.getUbuntuDistribution()})`);
+                const installationTypes = PlatformUtils.detectDbeaverInstallationType();
+                console.log(`Installation Types: ${installationTypes.join(', ')}`);
+            } else {
+                console.log(`Platform: ${PlatformUtils.isWindows() ? 'Windows' : PlatformUtils.isMacOS() ? 'macOS' : 'Linux'}`);
+            }
+            
+            console.log(`Workspace: ${CONFIG.dbeaver.workspaceDir || 'Not detected'}`);
+            console.log(`Data Sources File: ${CONFIG.dbeaver.dataSourcesFile || 'Not configured'}`);
+            console.log(`File Exists: ${CONFIG.dbeaver.dataSourcesFile && fs.existsSync(CONFIG.dbeaver.dataSourcesFile) ? '✅ Yes' : '❌ No'}`);
 
-            if (fs.existsSync(CONFIG.dbeaver.dataSourcesFile)) {
+            if (CONFIG.dbeaver.dataSourcesFile && fs.existsSync(CONFIG.dbeaver.dataSourcesFile)) {
                 const stats = fs.statSync(CONFIG.dbeaver.dataSourcesFile);
                 console.log(`File Size: ${stats.size} bytes`);
                 console.log(`Last Modified: ${stats.mtime}`);
@@ -1923,6 +1944,30 @@ Please check if this is a valid PostgreSQL backup file.`);
                         console.log(`   • ${conn.name}`);
                     });
                 }
+                
+                if (Object.keys(parsed.folders || {}).length > 0) {
+                    console.log('📁 Existing Folders:');
+                    Object.keys(parsed.folders).forEach(folder => {
+                        console.log(`   • ${folder}`);
+                    });
+                }
+            } else if (PlatformUtils.isUbuntu()) {
+                console.log('\n🔍 Ubuntu DBeaver Path Analysis:');
+                console.log('Checked paths:');
+                
+                // Show some of the paths that were checked
+                const homeDir = os.homedir();
+                const commonPaths = [
+                    path.join(homeDir, 'snap', 'dbeaver-ce', 'current', '.local', 'share', 'DBeaverData', 'workspace6'),
+                    path.join(homeDir, '.var', 'app', 'io.dbeaver.DBeaverCommunity', 'data', 'DBeaverData', 'workspace6'),
+                    path.join(homeDir, '.local', 'share', 'DBeaverData', 'workspace6'),
+                    path.join(homeDir, '.dbeaver', 'workspace6')
+                ];
+                
+                commonPaths.forEach(checkPath => {
+                    const exists = fs.existsSync(checkPath);
+                    console.log(`   ${exists ? '✅' : '❌'} ${checkPath}`);
+                });
             }
 
             console.log('');
@@ -1931,27 +1976,46 @@ Please check if this is a valid PostgreSQL backup file.`);
         }
     }
 
-    async addDbeaverConnection(dbName) {
+    async addDbeaverConnection(dbName, connectionName = null) {
         const folderName = this.selectedDbeaverFolder || this.getDbeaverFolderName();
-        return this.dbeaverManager.addConnection(dbName, folderName);
+        const finalConnectionName = connectionName || this.generateConnectionName(dbName);
+        return this.dbeaverManager.addConnection(dbName, folderName, finalConnectionName);
     }
 
 
     getDbeaverFolderName() {
         if (this.sourceType === 'local') {
+            // Ubuntu-friendly folder naming for local restores
+            if (PlatformUtils.isUbuntu()) {
+                return "PostgreSQL - Local Restores";
+            }
             return "2.Postgres - LOCAL";
         }
 
-        // Cloud logic remains the same
-        switch (CONFIG.selectedEnvironment) {
-            case 'dev':
-                return "Postgres - 1.DEV";
-            case 'stage':
-                return "Postgres - 2.STAGE";
-            case 'prod':
-                return "Postgres - 3.PROD";
-            default:
-                return "2.Postgres - LOCAL";
+        // Cloud logic with Ubuntu-specific naming
+        if (PlatformUtils.isUbuntu()) {
+            switch (CONFIG.selectedEnvironment) {
+                case 'dev':
+                    return "PostgreSQL - Development";
+                case 'stage':
+                    return "PostgreSQL - Staging";
+                case 'prod':
+                    return "PostgreSQL - Production";
+                default:
+                    return "PostgreSQL - Local Restores";
+            }
+        } else {
+            // Original naming for other platforms
+            switch (CONFIG.selectedEnvironment) {
+                case 'dev':
+                    return "Postgres - 1.DEV";
+                case 'stage':
+                    return "Postgres - 2.STAGE";
+                case 'prod':
+                    return "Postgres - 3.PROD";
+                default:
+                    return "2.Postgres - LOCAL";
+            }
         }
     }
 
@@ -2387,7 +2451,8 @@ Please check if this is a valid PostgreSQL backup file.`);
                             this.selectedDbeaverFolder = selectedFolder;
                         }
 
-                        dbeaverConnectionId = await this.addDbeaverConnection(this.targetDatabase);
+                        const connectionName = this.generateConnectionName(this.targetDatabase);
+                        dbeaverConnectionId = await this.addDbeaverConnection(this.targetDatabase, connectionName);
                         await this.validateDbeaverConnection(dbeaverConnectionId);
 
                     } catch (dbeaverError) {

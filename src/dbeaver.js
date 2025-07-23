@@ -3,11 +3,13 @@ const path = require('path');
 const os = require('os');
 const crypto = require('crypto');
 const CONFIG = require('../config');
+const PlatformUtils = require('./platform-utils');
 
 class DBeaverManager {
     async detectPaths() {
         const homeDir = os.homedir();
         const possible = [];
+
         if (process.platform === 'darwin') {
             possible.push(
                 path.join(homeDir, 'Library', 'DBeaverData', 'workspace6'),
@@ -20,27 +22,150 @@ class DBeaverManager {
                 path.join(homeDir, 'Documents', 'DBeaver', 'workspace6')
             );
         } else {
+            // Enhanced Linux/Ubuntu path detection
             possible.push(
+                // Snap installation paths
                 path.join(homeDir, 'snap', 'dbeaver-ce', 'current', '.local', 'share', 'DBeaverData', 'workspace6'),
+                path.join(homeDir, 'snap', 'dbeaver-ce', 'common', '.local', 'share', 'DBeaverData', 'workspace6'),
+
+                // Flatpak installation paths
+                path.join(homeDir, '.var', 'app', 'io.dbeaver.DBeaverCommunity', 'data', 'DBeaverData', 'workspace6'),
+                path.join(homeDir, '.var', 'app', 'io.dbeaver.DBeaverCommunity', 'config', 'DBeaverData', 'workspace6'),
+
+                // Standard Linux paths
                 path.join(homeDir, '.local', 'share', 'DBeaverData', 'workspace6'),
                 path.join(homeDir, '.dbeaver', 'workspace6'),
-                path.join(homeDir, 'Documents', 'DBeaver', 'workspace6')
-            );
-        }
+                path.join(homeDir, '.config', 'dbeaver', 'workspace6'),
 
-        for (const workspacePath of possible) {
-            if (fs.existsSync(workspacePath)) {
-                const dataSourcesPath = path.join(workspacePath, 'General', '.dbeaver', 'data-sources.json');
-                const credentialsPath = path.join(workspacePath, 'General', '.dbeaver', 'credentials-config.json');
-                if (fs.existsSync(path.dirname(dataSourcesPath))) {
-                    CONFIG.dbeaver.workspaceDir = workspacePath;
-                    CONFIG.dbeaver.dataSourcesFile = dataSourcesPath;
-                    CONFIG.dbeaver.credentialsFile = credentialsPath;
-                    return true;
+                // Manual installation paths
+                path.join(homeDir, 'dbeaver', 'workspace6'),
+                path.join(homeDir, 'Documents', 'DBeaver', 'workspace6'),
+                path.join(homeDir, 'Applications', 'DBeaver', 'workspace6'),
+
+                // System-wide installation paths
+                '/opt/dbeaver/workspace6',
+                '/usr/share/dbeaver/workspace6',
+
+                // Ubuntu-specific paths
+                path.join(homeDir, '.local', 'share', 'applications', 'dbeaver', 'workspace6'),
+
+                // Legacy paths for older versions
+                path.join(homeDir, '.dbeaver4', 'workspace6'),
+                path.join(homeDir, '.metadata', '.plugins', 'org.eclipse.core.runtime', '.settings')
+            );
+
+            // Add version-specific paths for different workspace versions
+            const workspaceVersions = ['workspace6', 'workspace5', 'workspace4', '.metadata'];
+            const basePaths = [
+                path.join(homeDir, 'snap', 'dbeaver-ce', 'current', '.local', 'share', 'DBeaverData'),
+                path.join(homeDir, '.var', 'app', 'io.dbeaver.DBeaverCommunity', 'data', 'DBeaverData'),
+                path.join(homeDir, '.local', 'share', 'DBeaverData'),
+                path.join(homeDir, '.dbeaver')
+            ];
+
+            for (const basePath of basePaths) {
+                for (const wsVersion of workspaceVersions) {
+                    const fullPath = path.join(basePath, wsVersion);
+                    if (!possible.includes(fullPath)) {
+                        possible.push(fullPath);
+                    }
                 }
             }
         }
+
+        // Try to detect installation type for better path prioritization on Ubuntu
+        if (PlatformUtils.isUbuntu()) {
+            const installationTypes = PlatformUtils.detectDbeaverInstallationType();
+            console.log(`🔍 Detected DBeaver installation types on Ubuntu: ${installationTypes.join(', ')}`);
+
+            // Reorder paths based on detected installation types
+            const prioritizedPaths = this.prioritizePathsByInstallationType(possible, installationTypes);
+            possible.splice(0, possible.length, ...prioritizedPaths);
+        }
+
+        console.log(`🔍 Checking ${possible.length} possible DBeaver workspace paths...`);
+
+        for (const workspacePath of possible) {
+            console.log(`🔍 Checking: ${workspacePath}`);
+
+            if (fs.existsSync(workspacePath)) {
+                console.log(`✅ Found workspace directory: ${workspacePath}`);
+
+                // Check for different possible data-sources.json locations
+                const possibleDataSourcesPaths = [
+                    path.join(workspacePath, 'General', '.dbeaver', 'data-sources.json'),
+                    path.join(workspacePath, '.dbeaver', 'data-sources.json'),
+                    path.join(workspacePath, 'data-sources.json')
+                ];
+
+                for (const dataSourcesPath of possibleDataSourcesPaths) {
+                    const credentialsPath = path.join(path.dirname(dataSourcesPath), 'credentials-config.json');
+
+                    if (fs.existsSync(path.dirname(dataSourcesPath))) {
+                        console.log(`✅ Found DBeaver configuration directory: ${path.dirname(dataSourcesPath)}`);
+
+                        CONFIG.dbeaver.workspaceDir = workspacePath;
+                        CONFIG.dbeaver.dataSourcesFile = dataSourcesPath;
+                        CONFIG.dbeaver.credentialsFile = credentialsPath;
+
+                        console.log(`✅ DBeaver workspace configured:`);
+                        console.log(`   Workspace: ${workspacePath}`);
+                        console.log(`   Data Sources: ${dataSourcesPath}`);
+                        console.log(`   Credentials: ${credentialsPath}`);
+
+                        return true;
+                    }
+                }
+            }
+        }
+
+        console.log('❌ No DBeaver workspace found in any of the checked paths');
         return false;
+    }
+
+    prioritizePathsByInstallationType(paths, installationTypes) {
+        const prioritized = [];
+        const remaining = [...paths];
+
+        // Prioritize based on detected installation types
+        for (const installType of installationTypes) {
+            const typeSpecificPaths = [];
+
+            for (let i = remaining.length - 1; i >= 0; i--) {
+                const path = remaining[i];
+                let matches = false;
+
+                switch (installType) {
+                    case 'snap':
+                        matches = path.includes('/snap/dbeaver-ce/');
+                        break;
+                    case 'flatpak':
+                        matches = path.includes('/.var/app/io.dbeaver.DBeaverCommunity/');
+                        break;
+                    case 'system':
+                        matches = path.startsWith('/opt/') || path.startsWith('/usr/');
+                        break;
+                    case 'manual':
+                        matches = path.includes('/dbeaver/') && !path.includes('/snap/') && !path.includes('/.var/');
+                        break;
+                    default:
+                        matches = path.includes('/.local/share/DBeaverData/') || path.includes('/.dbeaver/');
+                        break;
+                }
+
+                if (matches) {
+                    typeSpecificPaths.push(path);
+                    remaining.splice(i, 1);
+                }
+            }
+
+            prioritized.push(...typeSpecificPaths);
+        }
+
+        // Add remaining paths at the end
+        prioritized.push(...remaining);
+
+        return prioritized;
     }
 
     async readDataSources() {
@@ -63,7 +188,7 @@ class DBeaverManager {
         return `postgres-jdbc-${timestamp}-${random}`;
     }
 
-    async addConnection(dbName, folderName) {
+    async addConnection(dbName, folderName, connectionName = null) {
         const dataSources = await this.readDataSources();
         if (!dataSources.connections) dataSources.connections = {};
 
@@ -71,7 +196,7 @@ class DBeaverManager {
         dataSources.connections[connectionId] = {
             provider: 'postgresql',
             driver: 'postgres-jdbc',
-            name: dbName,
+            name: connectionName || dbName,
             'save-password': true,
             folder: folderName,
             configuration: {
