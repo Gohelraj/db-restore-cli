@@ -1976,9 +1976,10 @@ Please check if this is a valid PostgreSQL backup file.`);
         }
     }
 
-    async addDbeaverConnection(dbName) {
+    async addDbeaverConnection(dbName, connectionName = null) {
         const folderName = this.selectedDbeaverFolder || this.getDbeaverFolderName();
-        return this.dbeaverManager.addConnection(dbName, folderName);
+        const finalConnectionName = connectionName || this.generateConnectionName(dbName);
+        return this.dbeaverManager.addConnection(dbName, folderName, finalConnectionName);
     }
 
 
@@ -2450,7 +2451,8 @@ Please check if this is a valid PostgreSQL backup file.`);
                             this.selectedDbeaverFolder = selectedFolder;
                         }
 
-                        dbeaverConnectionId = await this.addDbeaverConnection(this.targetDatabase);
+                        const connectionName = this.generateConnectionName(this.targetDatabase);
+                        dbeaverConnectionId = await this.addDbeaverConnection(this.targetDatabase, connectionName);
                         await this.validateDbeaverConnection(dbeaverConnectionId);
 
                     } catch (dbeaverError) {
