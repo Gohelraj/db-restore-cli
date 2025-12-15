@@ -3,9 +3,9 @@ const fs = require('fs');
 const path = require('path');
 const readline = require('readline');
 const keypress = require('keypress');
-const AWS = require('aws-sdk');
 const os = require('os');
 const crypto = require('crypto');
+const { version } = require('../package.json')
 
 const CONFIG = require('../config.js');
 const PlatformUtils = require('./platform-utils');
@@ -62,7 +62,7 @@ class DatabaseRestoreManager {
             ];
 
             const selectedIndex = await this.selectFromMenu(
-                '📁 Database Restoration Source',
+                `📁 Database Restoration Source, version: ${version}`,
                 options
             );
 
@@ -1073,7 +1073,7 @@ Please check if this is a valid PostgreSQL backup file.`);
                     FROM information_schema.schemata 
                     WHERE schema_name NOT IN ('information_schema', 'pg_catalog', 'pg_toast', 'pg_temp_1', 'pg_toast_temp_1');
                 `;
-                
+
                 const schemas = execSync(
                     `psql ${baseOptions} -d "${dbName}" -t -A -c "${schemaQuery}"`,
                     { stdio: 'pipe', encoding: 'utf8', env }
@@ -1088,7 +1088,7 @@ Please check if this is a valid PostgreSQL backup file.`);
                                 `GRANT ALL ON SCHEMA "${cleanSchema}" TO ${CONFIG.postgres.user};`,
                                 `GRANT USAGE ON SCHEMA "${cleanSchema}" TO ${CONFIG.postgres.user};`
                             ];
-                            
+
                             for (const cmd of schemaCommands) {
                                 execSync(`psql ${baseOptions} -d "${dbName}" -c "${cmd}"`, { stdio: 'pipe', env });
                             }
@@ -1104,7 +1104,7 @@ Please check if this is a valid PostgreSQL backup file.`);
                         `GRANT ALL ON SCHEMA public TO ${CONFIG.postgres.user};`,
                         `GRANT USAGE ON SCHEMA public TO ${CONFIG.postgres.user};`
                     ];
-                    
+
                     for (const cmd of publicSchemaCommands) {
                         execSync(`psql ${baseOptions} -d "${dbName}" -c "${cmd}"`, { stdio: 'pipe', env });
                     }
@@ -1124,7 +1124,7 @@ Please check if this is a valid PostgreSQL backup file.`);
                     FROM pg_tables 
                     WHERE schemaname NOT IN ('information_schema', 'pg_catalog');
                 `;
-                
+
                 const tables = execSync(
                     `psql ${baseOptions} -d "${dbName}" -t -A -c "${tableQuery}"`,
                     { stdio: 'pipe', encoding: 'utf8', env }
@@ -1140,7 +1140,7 @@ Please check if this is a valid PostgreSQL backup file.`);
                                 `ALTER TABLE "${schema}"."${tableName}" OWNER TO ${CONFIG.postgres.user};`,
                                 `GRANT ALL PRIVILEGES ON TABLE "${schema}"."${tableName}" TO ${CONFIG.postgres.user};`
                             ];
-                            
+
                             for (const cmd of tableCommands) {
                                 execSync(`psql ${baseOptions} -d "${dbName}" -c "${cmd}"`, { stdio: 'pipe', env });
                             }
@@ -1161,7 +1161,7 @@ Please check if this is a valid PostgreSQL backup file.`);
                     FROM pg_sequences 
                     WHERE schemaname NOT IN ('information_schema', 'pg_catalog');
                 `;
-                
+
                 const sequences = execSync(
                     `psql ${baseOptions} -d "${dbName}" -t -A -c "${sequenceQuery}"`,
                     { stdio: 'pipe', encoding: 'utf8', env }
@@ -1177,7 +1177,7 @@ Please check if this is a valid PostgreSQL backup file.`);
                                 `ALTER SEQUENCE "${schema}"."${sequenceName}" OWNER TO ${CONFIG.postgres.user};`,
                                 `GRANT ALL PRIVILEGES ON SEQUENCE "${schema}"."${sequenceName}" TO ${CONFIG.postgres.user};`
                             ];
-                            
+
                             for (const cmd of seqCommands) {
                                 execSync(`psql ${baseOptions} -d "${dbName}" -c "${cmd}"`, { stdio: 'pipe', env });
                             }
@@ -1198,7 +1198,7 @@ Please check if this is a valid PostgreSQL backup file.`);
                     FROM pg_views 
                     WHERE schemaname NOT IN ('information_schema', 'pg_catalog');
                 `;
-                
+
                 const views = execSync(
                     `psql ${baseOptions} -d "${dbName}" -t -A -c "${viewQuery}"`,
                     { stdio: 'pipe', encoding: 'utf8', env }
@@ -1230,7 +1230,7 @@ Please check if this is a valid PostgreSQL backup file.`);
                     WHERE n.nspname NOT IN ('information_schema', 'pg_catalog', 'pg_toast')
                     AND p.prokind = 'f';
                 `;
-                
+
                 const functions = execSync(
                     `psql ${baseOptions} -d "${dbName}" -t -A -c "${functionQuery}"`,
                     { stdio: 'pipe', encoding: 'utf8', env }
@@ -1270,7 +1270,7 @@ Please check if this is a valid PostgreSQL backup file.`);
 
             if (format === 'sql') {
                 console.log('🔧 Trying SQL restore with transaction safety...');
-                
+
                 // Method 1: Single transaction with continue on error
                 try {
                     const singleTxCommand = `psql ${baseOptions} -d "${dbName}" --single-transaction -v ON_ERROR_STOP=0 -f "${filePath}"`;
@@ -1293,7 +1293,7 @@ Please check if this is a valid PostgreSQL backup file.`);
 
             } else if (format === 'custom') {
                 console.log('🔧 Trying pg_restore with minimal flags...');
-                
+
                 // Method 1: Minimal restore flags
                 try {
                     const minimalCommand = `pg_restore ${baseOptions} -d "${dbName}" --no-owner --no-privileges --verbose "${filePath}"`;
@@ -1319,10 +1319,10 @@ Please check if this is a valid PostgreSQL backup file.`);
                     console.log('🔧 Trying schema-first approach...');
                     const schemaCommand = `pg_restore ${baseOptions} -d "${dbName}" --schema-only --no-owner --no-privileges "${filePath}"`;
                     execSync(schemaCommand, { stdio: 'pipe', env });
-                    
+
                     const dataCommand = `pg_restore ${baseOptions} -d "${dbName}" --data-only --no-owner --no-privileges "${filePath}"`;
                     execSync(dataCommand, { stdio: 'pipe', env });
-                    
+
                     console.log('✅ Schema-first approach succeeded');
                     return;
                 } catch (schemaDataError) {
@@ -1608,7 +1608,7 @@ Please check if this is a valid PostgreSQL backup file.`);
             if (restoreError && restoreError.type === 'ownership' || !restoreSuccessful) {
                 console.log('\n🔧 Applying comprehensive ownership fixes...');
                 await this.fixDatabaseOwnership(dbName);
-                
+
                 // Re-verify after ownership fixes
                 console.log('\n🔍 Re-verifying after ownership fixes...');
                 await this.verifyRestoration(dbName);
@@ -1618,7 +1618,7 @@ Please check if this is a valid PostgreSQL backup file.`);
             if (restoreError && restoreError.type === 'general') {
                 console.log('\n🔄 Attempting alternative restore methods...');
                 await this.tryOwnershipSafeRestore(filePath, format, dbName);
-                
+
                 // Final verification
                 await this.verifyRestoration(dbName);
             }
@@ -1913,7 +1913,7 @@ Please check if this is a valid PostgreSQL backup file.`);
         try {
             console.log('\n🔍 DBeaver Debug Information:');
             console.log('============================');
-            
+
             // Show platform-specific information
             if (PlatformUtils.isUbuntu()) {
                 console.log(`Platform: Ubuntu (${PlatformUtils.getUbuntuDistribution()})`);
@@ -1922,7 +1922,7 @@ Please check if this is a valid PostgreSQL backup file.`);
             } else {
                 console.log(`Platform: ${PlatformUtils.isWindows() ? 'Windows' : PlatformUtils.isMacOS() ? 'macOS' : 'Linux'}`);
             }
-            
+
             console.log(`Workspace: ${CONFIG.dbeaver.workspaceDir || 'Not detected'}`);
             console.log(`Data Sources File: ${CONFIG.dbeaver.dataSourcesFile || 'Not configured'}`);
             console.log(`File Exists: ${CONFIG.dbeaver.dataSourcesFile && fs.existsSync(CONFIG.dbeaver.dataSourcesFile) ? '✅ Yes' : '❌ No'}`);
@@ -1944,7 +1944,7 @@ Please check if this is a valid PostgreSQL backup file.`);
                         console.log(`   • ${conn.name}`);
                     });
                 }
-                
+
                 if (Object.keys(parsed.folders || {}).length > 0) {
                     console.log('📁 Existing Folders:');
                     Object.keys(parsed.folders).forEach(folder => {
@@ -1954,7 +1954,7 @@ Please check if this is a valid PostgreSQL backup file.`);
             } else if (PlatformUtils.isUbuntu()) {
                 console.log('\n🔍 Ubuntu DBeaver Path Analysis:');
                 console.log('Checked paths:');
-                
+
                 // Show some of the paths that were checked
                 const homeDir = os.homedir();
                 const commonPaths = [
@@ -1963,7 +1963,7 @@ Please check if this is a valid PostgreSQL backup file.`);
                     path.join(homeDir, '.local', 'share', 'DBeaverData', 'workspace6'),
                     path.join(homeDir, '.dbeaver', 'workspace6')
                 ];
-                
+
                 commonPaths.forEach(checkPath => {
                     const exists = fs.existsSync(checkPath);
                     console.log(`   ${exists ? '✅' : '❌'} ${checkPath}`);
@@ -2411,13 +2411,13 @@ Please check if this is a valid PostgreSQL backup file.`);
             let dbeaverConnectionId = null;
             console.log('\n🔗 DBeaver Integration');
             console.log('======================');
-            
+
             // Detect DBeaver paths
             const dbeaverDetected = await this.detectDbeaverPaths();
             if (dbeaverDetected) {
                 console.log('✅ DBeaver installation detected');
                 await this.showExistingConnections();
-                
+
                 const dbeaverOptions = [
                     'Add connection automatically (recommended folder)',
                     'Add connection with folder selection',
@@ -2517,7 +2517,7 @@ Please check if this is a valid PostgreSQL backup file.`);
 
             // Use the new ownership-safe restore method
             await this.tryOwnershipSafeRestore(filePath, format, this.targetDatabase);
-            
+
             // Apply ownership fixes after alternative restore
             console.log('🔧 Applying ownership fixes after alternative restore...');
             await this.fixDatabaseOwnership(this.targetDatabase);
