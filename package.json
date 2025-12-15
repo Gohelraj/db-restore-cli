@@ -19,11 +19,10 @@
   "pkg": {
     "scripts": [
       "index.js",
-      "config.js"
+      "config.js",
+      "src/config-manager.js"
     ],
-    "assets": [
-      ".env.example"
-    ],
+    "assets": [],
     "targets": [
       "node18-win-x64",
       "node18-linux-x64",
