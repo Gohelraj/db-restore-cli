@@ -1,0 +1,79 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: node18-linux-x64
+            output: db-restore-linux
+          - os: macos-latest
+            target: node18-macos-x64
+            output: db-restore-macos
+          - os: macos-latest
+            target: node18-macos-arm64
+            output: db-restore-macos-arm64
+          - os: windows-latest
+            target: node18-win-x64
+            output: db-restore-win.exe
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build binary
+        run: npx pkg . --targets ${{ matrix.target }} --output ./build/${{ matrix.output }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.output }}
+          path: ./build/${{ matrix.output }}
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: ./artifacts
+
+      - name: Prepare release files
+        run: |
+          mkdir -p release
+          cp artifacts/db-restore-linux/db-restore-linux release/
+          cp artifacts/db-restore-macos/db-restore-macos release/
+          cp artifacts/db-restore-macos-arm64/db-restore-macos-arm64 release/
+          cp artifacts/db-restore-win.exe/db-restore-win.exe release/
+          chmod +x release/db-restore-linux release/db-restore-macos release/db-restore-macos-arm64
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            release/db-restore-linux
+            release/db-restore-macos
+            release/db-restore-macos-arm64
+            release/db-restore-win.exe
+          generate_release_notes: true
