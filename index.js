@@ -1,5 +1,4 @@
 const ConfigManager = require('./src/config-manager');
-const RestoreCLI = require('./src/restore-cli');
 
 async function main() {
   const args = process.argv.slice(2);
@@ -17,11 +16,15 @@ async function main() {
     await configManager.runSetup();
   }
 
-  // Load and apply config to environment
+  // Load and apply config to environment BEFORE requiring other modules
   configManager.load();
   configManager.applyToEnv();
 
-  // Now require config.js after env is set
+  // Clear require cache for config.js to pick up new env vars
+  delete require.cache[require.resolve('./config.js')];
+
+  // Now require RestoreCLI after env is set
+  const RestoreCLI = require('./src/restore-cli');
   const manager = new RestoreCLI();
   manager.run();
 }
