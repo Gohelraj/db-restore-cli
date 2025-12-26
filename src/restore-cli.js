@@ -52,6 +52,47 @@ class DatabaseRestoreManager {
         this.cleanupDone = false;
         this.awsService = new AWSService();
         this.dbeaverManager = new DBeaverManager();
+        
+        // Pre-compile regex patterns for better performance
+        this._dbPatterns = [
+            /database/i,
+            /backup/i,
+            /dump/i,
+            /\.db$/i,
+            /\.bak$/i,
+            /postgres/i,
+            /pg_/i
+        ];
+        
+        // Pre-compile error patterns
+        this._ownershipErrorPatterns = [
+            /must be owner of/i,
+            /permission denied for/i,
+            /role ".*" does not exist/i,
+            /must be member of role/i,
+            /cannot drop owned by/i,
+            /owner of database/i,
+            /must be superuser/i
+        ];
+        
+        this._recoverableErrorPatterns = [
+            /already exists/i,
+            /does not exist, skipping/i,
+            /multiple primary key/i,
+            /relation already exists/i,
+            /constraint.*already exists/i,
+            /duplicate key value/i
+        ];
+        
+        this._fatalErrorPatterns = [
+            /fatal.*authentication failed/i,
+            /could not connect to server/i,
+            /database.*does not exist/i,
+            /invalid command/i,
+            /syntax error at or near/i,
+            /no such file or directory/i,
+            /connection refused/i
+        ];
     }
 
     async selectSourceType() {
@@ -468,8 +509,13 @@ class DatabaseRestoreManager {
         });
     }
 
-    // List available AWS profiles
+    // List available AWS profiles (cached)
     async getAvailableProfiles() {
+        // Cache profiles to avoid repeated file reads
+        if (this._cachedProfiles) {
+            return this._cachedProfiles;
+        }
+
         try {
             const homeDir = require('os').homedir();
             const credentialsPath = path.join(homeDir, '.aws', 'credentials');
@@ -477,9 +523,10 @@ class DatabaseRestoreManager {
 
             const profiles = new Set();
 
-            // Check credentials file
+            // Check credentials file once
+            let credentialsContent = null;
             if (fs.existsSync(credentialsPath)) {
-                const credentialsContent = fs.readFileSync(credentialsPath, 'utf8');
+                credentialsContent = fs.readFileSync(credentialsPath, 'utf8');
                 const credentialMatches = credentialsContent.match(/^\[([^\]]+)\]/gm);
                 if (credentialMatches) {
                     credentialMatches.forEach(match => {
@@ -489,9 +536,14 @@ class DatabaseRestoreManager {
                         }
                     });
                 }
+                
+                // Add default profile if credentials exist
+                if (credentialsContent.includes('[default]')) {
+                    profiles.add('default');
+                }
             }
 
-            // Check config file
+            // Check config file once
             if (fs.existsSync(configPath)) {
                 const configContent = fs.readFileSync(configPath, 'utf8');
                 const configMatches = configContent.match(/^\[profile ([^\]]+)\]/gm);
@@ -503,15 +555,8 @@ class DatabaseRestoreManager {
                 }
             }
 
-            // Add default profile if credentials exist
-            if (fs.existsSync(credentialsPath)) {
-                const credentialsContent = fs.readFileSync(credentialsPath, 'utf8');
-                if (credentialsContent.includes('[default]')) {
-                    profiles.add('default');
-                }
-            }
-
-            return Array.from(profiles);
+            this._cachedProfiles = Array.from(profiles);
+            return this._cachedProfiles;
         } catch (error) {
             console.warn('Warning: Could not read AWS profiles, using predefined list');
             return CONFIG.aws.profiles;
@@ -649,35 +694,45 @@ class DatabaseRestoreManager {
         }
     }
 
-    // Get all files recursively
-    getAllFiles(dir) {
-        let files = [];
+    // Get all files recursively (optimized with early exit)
+    getAllFiles(dir, maxFiles = 1000) {
+        const files = [];
+        const queue = [dir];
 
-        try {
-            const items = fs.readdirSync(dir);
+        while (queue.length > 0 && files.length < maxFiles) {
+            const currentDir = queue.shift();
+            
+            try {
+                const items = fs.readdirSync(currentDir);
 
-            items.forEach(item => {
-                const fullPath = path.join(dir, item);
-                const stat = fs.statSync(fullPath);
+                for (const item of items) {
+                    if (files.length >= maxFiles) break;
+                    
+                    const fullPath = path.join(currentDir, item);
+                    try {
+                        const stat = fs.statSync(fullPath);
 
-                if (stat.isDirectory()) {
-                    files = files.concat(this.getAllFiles(fullPath));
-                } else {
-                    files.push(fullPath);
+                        if (stat.isDirectory()) {
+                            queue.push(fullPath);
+                        } else {
+                            files.push(fullPath);
+                        }
+                    } catch (itemError) {
+                        // Skip inaccessible items
+                        continue;
+                    }
                 }
-            });
-        } catch (error) {
-            console.error(`Error getting files: ${error.message}`);
+            } catch (error) {
+                console.error(`Error reading directory ${currentDir}: ${error.message}`);
+            }
         }
 
         return files;
     }
 
-    // Recursively search for database files
+    // Recursively search for database files (optimized with priority-based early exit)
     searchForDatabaseFile(dir) {
         try {
-            const items = fs.readdirSync(dir);
-
             const supportedFormats = [
                 { ext: '.sql', format: 'sql', priority: 1 },
                 { ext: '.dump', format: 'custom', priority: 2 },
@@ -687,37 +742,62 @@ class DatabaseRestoreManager {
                 { ext: '.bak', format: 'custom', priority: 6 }
             ];
 
-            let foundFiles = [];
+            // BFS instead of DFS for better performance
+            const queue = [dir];
+            let bestMatch = null;
+            let bestPriority = Infinity;
 
-            for (const item of items) {
-                const fullPath = path.join(dir, item);
-                const stat = fs.statSync(fullPath);
+            while (queue.length > 0) {
+                const currentDir = queue.shift();
+                
+                try {
+                    const items = fs.readdirSync(currentDir);
 
-                if (stat.isDirectory()) {
-                    const subResult = this.searchForDatabaseFile(fullPath);
-                    if (subResult) {
-                        foundFiles.push(subResult);
-                    }
-                } else {
-                    for (const format of supportedFormats) {
-                        if (item.toLowerCase().endsWith(format.ext)) {
-                            foundFiles.push({
-                                path: fullPath,
-                                format: format.format,
-                                priority: format.priority,
-                                size: stat.size
-                            });
-                            break;
+                    for (const item of items) {
+                        const fullPath = path.join(currentDir, item);
+                        
+                        try {
+                            const stat = fs.statSync(fullPath);
+
+                            if (stat.isDirectory()) {
+                                queue.push(fullPath);
+                            } else {
+                                const lowerItem = item.toLowerCase();
+                                
+                                for (const format of supportedFormats) {
+                                    if (lowerItem.endsWith(format.ext)) {
+                                        const candidate = {
+                                            path: fullPath,
+                                            format: format.format,
+                                            priority: format.priority,
+                                            size: stat.size
+                                        };
+                                        
+                                        if (format.priority < bestPriority) {
+                                            bestMatch = candidate;
+                                            bestPriority = format.priority;
+                                            
+                                            // Early exit if we find highest priority file
+                                            if (bestPriority === 1) {
+                                                return bestMatch;
+                                            }
+                                        }
+                                        break;
+                                    }
+                                }
+                            }
+                        } catch (statError) {
+                            // Skip inaccessible items
+                            continue;
                         }
                     }
+                } catch (readError) {
+                    // Skip unreadable directories
+                    continue;
                 }
             }
 
-            if (foundFiles.length > 0) {
-                return foundFiles.sort((a, b) => a.priority - b.priority)[0];
-            }
-
-            return null;
+            return bestMatch;
         } catch (error) {
             console.error(`Error searching for database files: ${error.message}`);
             return null;
@@ -729,31 +809,41 @@ class DatabaseRestoreManager {
         return this.searchForDatabaseFile(dir);
     }
 
-    // Find binary dumps
+    // Find binary dumps (optimized to read minimal data)
     findBinaryDump(dir) {
         try {
             const allFiles = this.getAllFiles(dir);
 
             for (const filePath of allFiles) {
                 const fileName = path.basename(filePath);
-                const stat = fs.statSync(filePath);
+                
+                try {
+                    const stat = fs.statSync(filePath);
 
-                if (!fileName.includes('.') && stat.size > 1024) {
-                    try {
-                        const buffer = fs.readFileSync(filePath, { start: 0, end: 5 });
-                        const magic = buffer.toString();
+                    // Only check files without extensions and larger than 1KB
+                    if (!fileName.includes('.') && stat.size > 1024) {
+                        const fd = fs.openSync(filePath, 'r');
+                        const buffer = Buffer.alloc(5);
+                        
+                        try {
+                            fs.readSync(fd, buffer, 0, 5, 0);
+                            const magic = buffer.toString();
 
-                        if (magic.includes('PGDMP')) {
-                            return {
-                                path: filePath,
-                                format: 'custom',
-                                priority: 2,
-                                size: stat.size
-                            };
+                            if (magic.includes('PGDMP')) {
+                                return {
+                                    path: filePath,
+                                    format: 'custom',
+                                    priority: 2,
+                                    size: stat.size
+                                };
+                            }
+                        } finally {
+                            fs.closeSync(fd);
                         }
-                    } catch (error) {
-                        // Ignore read errors, continue checking
                     }
+                } catch (error) {
+                    // Skip files we can't read
+                    continue;
                 }
             }
 
@@ -764,34 +854,33 @@ class DatabaseRestoreManager {
         }
     }
 
-    // Find any file that might be a database dump
+    // Find any file that might be a database dump (optimized with pre-compiled regex)
     findAnyDatabaseFile(dir) {
         try {
             const allFiles = this.getAllFiles(dir);
 
-            const dbPatterns = [
-                /database/i,
-                /backup/i,
-                /dump/i,
-                /\.db$/i,
-                /\.bak$/i,
-                /postgres/i,
-                /pg_/i
-            ];
-
             for (const filePath of allFiles) {
                 const fileName = path.basename(filePath);
-                const stat = fs.statSync(filePath);
+                
+                try {
+                    const stat = fs.statSync(filePath);
 
-                for (const pattern of dbPatterns) {
-                    if (pattern.test(fileName) && stat.size > 0) {
-                        return {
-                            path: filePath,
-                            format: 'unknown',
-                            priority: 10,
-                            size: stat.size
-                        };
+                    if (stat.size > 0) {
+                        // Use pre-compiled patterns
+                        for (const pattern of this._dbPatterns) {
+                            if (pattern.test(fileName)) {
+                                return {
+                                    path: filePath,
+                                    format: 'unknown',
+                                    priority: 10,
+                                    size: stat.size
+                                };
+                            }
+                        }
                     }
+                } catch (statError) {
+                    // Skip files we can't stat
+                    continue;
                 }
             }
 
@@ -1383,43 +1472,47 @@ Please check if this is a valid PostgreSQL backup file.`);
     detectDumpFormat(filePath) {
         try {
             const ext = path.extname(filePath).toLowerCase();
-            const filename = path.basename(filePath).toLowerCase();
 
-            // Check by extension first
+            // Check by extension first (fast path)
             if (ext === '.sql') {
                 return 'sql';
             } else if (ext === '.dump') {
                 return 'custom';
             }
 
-            // For files without clear extensions, check content
+            // For files without clear extensions, check content (read only necessary bytes)
             if (fs.existsSync(filePath)) {
-                // Read first few bytes to detect format
-                const buffer = Buffer.alloc(512);
                 const fd = fs.openSync(filePath, 'r');
-                const bytesRead = fs.readSync(fd, buffer, 0, 512, 0);
-                fs.closeSync(fd);
+                const buffer = Buffer.alloc(512);
+                
+                try {
+                    const bytesRead = fs.readSync(fd, buffer, 0, 512, 0);
 
-                const header = buffer.toString('utf8', 0, bytesRead);
+                    // Check for PostgreSQL custom dump format magic header (PGDMP)
+                    if (buffer[0] === 0x50 && buffer[1] === 0x47 && buffer[2] === 0x44 && buffer[3] === 0x4D && buffer[4] === 0x50) {
+                        return 'custom';
+                    }
 
-                // Check for PostgreSQL custom dump format magic header
-                if (buffer[0] === 0x50 && buffer[1] === 0x47 && buffer[2] === 0x44 && buffer[3] === 0x4D && buffer[4] === 0x50) {
-                    return 'custom';
-                }
+                    // Check for common SQL patterns (only if we read enough data)
+                    if (bytesRead > 0) {
+                        const header = buffer.toString('utf8', 0, bytesRead);
+                        
+                        if (header.includes('--') ||
+                            header.includes('CREATE') ||
+                            header.includes('INSERT') ||
+                            header.includes('SET ') ||
+                            header.includes('\\connect') ||
+                            header.includes('BEGIN;')) {
+                            return 'sql';
+                        }
 
-                // Check for common SQL patterns
-                if (header.includes('--') ||
-                    header.includes('CREATE') ||
-                    header.includes('INSERT') ||
-                    header.includes('SET ') ||
-                    header.includes('\connect') ||
-                    header.includes('BEGIN;')) {
-                    return 'sql';
-                }
-
-                // Check for PostgreSQL directory format (should not happen for single files)
-                if (header.includes('toc.dat') || header.includes('restore.sql')) {
-                    return 'directory';
+                        // Check for PostgreSQL directory format
+                        if (header.includes('toc.dat') || header.includes('restore.sql')) {
+                            return 'directory';
+                        }
+                    }
+                } finally {
+                    fs.closeSync(fd);
                 }
             }
 
@@ -1540,52 +1633,20 @@ Please check if this is a valid PostgreSQL backup file.`);
                     console.log(errorOutput);
                 }
 
-                // Enhanced error analysis for ownership issues
-                const ownershipErrors = [
-                    'must be owner of',
-                    'permission denied for',
-                    'role ".*" does not exist',
-                    'must be member of role',
-                    'cannot drop owned by',
-                    'owner of database',
-                    'must be superuser'
-                ];
-
-                const hasOwnershipErrors = ownershipErrors.some(err => {
-                    const regex = new RegExp(err, 'i');
-                    return regex.test(errorOutput) || regex.test(stdOutput);
-                });
+                // Enhanced error analysis using pre-compiled patterns
+                const hasOwnershipErrors = this._ownershipErrorPatterns.some(pattern => 
+                    pattern.test(errorOutput) || pattern.test(stdOutput)
+                );
 
                 // Check for recoverable errors (including ownership issues)
-                const recoverableErrors = [
-                    'already exists',
-                    'does not exist, skipping',
-                    'multiple primary key',
-                    'relation already exists',
-                    'constraint.*already exists',
-                    'duplicate key value'
-                ];
-
-                const hasRecoverableErrors = recoverableErrors.some(err => {
-                    const regex = new RegExp(err, 'i');
-                    return regex.test(errorOutput) || regex.test(stdOutput);
-                });
+                const hasRecoverableErrors = this._recoverableErrorPatterns.some(pattern => 
+                    pattern.test(errorOutput) || pattern.test(stdOutput)
+                );
 
                 // Check for fatal errors that definitely indicate failure
-                const fatalErrors = [
-                    'fatal.*authentication failed',
-                    'could not connect to server',
-                    'database.*does not exist',
-                    'invalid command',
-                    'syntax error at or near',
-                    'no such file or directory',
-                    'connection refused'
-                ];
-
-                const hasFatalErrors = fatalErrors.some(err => {
-                    const regex = new RegExp(err, 'i');
-                    return regex.test(errorOutput);
-                });
+                const hasFatalErrors = this._fatalErrorPatterns.some(pattern => 
+                    pattern.test(errorOutput)
+                );
 
                 if (hasFatalErrors) {
                     throw new Error(`Database restore failed with fatal error: ${errorOutput || stdOutput || 'Unknown error'}`);
@@ -1673,8 +1734,62 @@ Please check if this is a valid PostgreSQL backup file.`);
                 allTablesResult = '0';
             }
 
-            const totalTableCount = parseInt(allTablesResult.trim().replace(/\r?\n/g, '').replace(/[^0-9]/g, '')) || 0;
-            console.log(`📊 Total tables found: ${totalTableCount}`);
+            // Get comprehensive database statistics in a single query
+            const statsQuery = `
+                SELECT 
+                    (SELECT COUNT(*) FROM information_schema.tables WHERE table_schema NOT IN ('information_schema', 'pg_catalog')) as table_count,
+                    (SELECT COUNT(*) FROM information_schema.sequences WHERE sequence_schema NOT IN ('information_schema', 'pg_catalog')) as sequence_count,
+                    (SELECT COUNT(*) FROM information_schema.views WHERE table_schema NOT IN ('information_schema', 'pg_catalog')) as view_count,
+                    pg_size_pretty(pg_database_size('${dbName}')) as db_size;
+            `;
+
+            try {
+                const statsResult = execSync(
+                    `psql ${baseOptions} -d ${dbName} -t -A -c "${statsQuery}"`,
+                    { encoding: 'utf8', env }
+                ).trim();
+
+                const stats = statsResult.split('|');
+                const totalTableCount = parseInt(stats[0]) || 0;
+                const sequenceCount = parseInt(stats[1]) || 0;
+                const viewCount = parseInt(stats[2]) || 0;
+                const dbSize = stats[3] || 'unknown';
+
+                console.log(`📊 Total tables found: ${totalTableCount}`);
+                console.log(`💾 Database size: ${dbSize}`);
+                if (sequenceCount > 0) {
+                    console.log(`🔢 Sequences found: ${sequenceCount}`);
+                }
+                if (viewCount > 0) {
+                    console.log(`👁️  Views found: ${viewCount}`);
+                }
+
+                // Final assessment
+                if (totalTableCount === 0) {
+                    console.log('\n❌ VERIFICATION FAILED: No tables found in restored database');
+                    console.log('🔍 Possible issues:');
+                    console.log('   • Dump file may be empty or corrupted');
+                    console.log('   • Restore command may have failed silently');
+                    console.log('   • Permission issues preventing table creation');
+                    console.log('   • Database format not compatible with pg_restore/psql');
+
+                    // Suggest manual inspection
+                    console.log('\n💡 Manual verification steps:');
+                    console.log(`   1. Connect: psql ${baseOptions} -d ${dbName}`);
+                    console.log('   2. Run: \\dt+ (list all tables with details)');
+                    console.log('   3. Run: \\dn (list all schemas)');
+                    console.log('   4. Check restore logs above for specific errors');
+
+                    throw new Error('Database restoration verification failed - no tables found');
+                } else {
+                    console.log(`\n✅ VERIFICATION PASSED: Successfully restored ${totalTableCount} table(s)`);
+                    return true;
+                }
+
+            } catch (queryError) {
+                // Fallback to original verification if combined query fails
+                console.warn(`Warning: Combined stats query failed, using fallback method: ${queryError.message}`);
+            }
 
             // Get detailed table information
             const tablesListQuery = `

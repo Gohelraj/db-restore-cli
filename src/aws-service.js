@@ -153,14 +153,14 @@ class AWSService {
         const command = new GetObjectCommand({ Bucket: CONFIG.s3Bucket, Key: key });
         const response = await this.s3.send(command);
 
-        // Convert stream to buffer
-        const chunks = [];
-        for await (const chunk of response.Body) {
-            chunks.push(chunk);
-        }
-        const buffer = Buffer.concat(chunks);
-        fs.writeFileSync(local, buffer);
-        return local;
+        // Stream directly to file instead of loading into memory
+        const writeStream = fs.createWriteStream(local);
+        
+        return new Promise((resolve, reject) => {
+            response.Body.pipe(writeStream)
+                .on('error', reject)
+                .on('finish', () => resolve(local));
+        });
     }
 
     formatFileSize(bytes) {
