@@ -519,6 +519,8 @@ class DatabaseRestoreManager {
     // List available AWS profiles (cached)
     async getAvailableProfiles() {
         // Cache profiles to avoid repeated file reads
+        // Note: Cache is instance-level and persists for the session
+        // If AWS profiles change during runtime, create a new instance
         if (this._cachedProfiles) {
             return this._cachedProfiles;
         }
@@ -568,6 +570,11 @@ class DatabaseRestoreManager {
             console.warn('Warning: Could not read AWS profiles, using predefined list');
             return CONFIG.aws.profiles;
         }
+    }
+    
+    // Clear cached profiles (useful if AWS config changes during runtime)
+    clearProfileCache() {
+        this._cachedProfiles = null;
     }
 
     // Select AWS profile and environment
@@ -702,7 +709,7 @@ class DatabaseRestoreManager {
     }
 
     // Get all files recursively (optimized with early exit)
-    getAllFiles(dir, maxFiles = 1000) {
+    getAllFiles(dir, maxFiles = 10000) {
         const files = [];
         const queue = [dir];
 
@@ -845,6 +852,7 @@ class DatabaseRestoreManager {
                                 };
                             }
                         } finally {
+                            // Always close file descriptor
                             fs.closeSync(fd);
                         }
                     }
@@ -1750,17 +1758,20 @@ Please check if this is a valid PostgreSQL backup file.`);
             }
 
             // Get comprehensive database statistics in a single query
+            // Note: dbName is already validated by PostgreSQL when we connect to it
+            // and comes from controlled sources (user input via prompt or generated internally)
+            const escapedDbName = dbName.replace(/'/g, "''"); // Escape single quotes for PostgreSQL
             const statsQuery = `
                 SELECT 
                     (SELECT COUNT(*) FROM information_schema.tables WHERE table_schema NOT IN ('information_schema', 'pg_catalog')) as table_count,
                     (SELECT COUNT(*) FROM information_schema.sequences WHERE sequence_schema NOT IN ('information_schema', 'pg_catalog')) as sequence_count,
                     (SELECT COUNT(*) FROM information_schema.views WHERE table_schema NOT IN ('information_schema', 'pg_catalog')) as view_count,
-                    pg_size_pretty(pg_database_size('${dbName}')) as db_size;
+                    pg_size_pretty(pg_database_size('${escapedDbName}')) as db_size;
             `;
 
             try {
                 const statsResult = execSync(
-                    `psql ${baseOptions} -d ${dbName} -t -A -c "${statsQuery}"`,
+                    `psql ${baseOptions} -d ${escapedDbName} -t -A -c "${statsQuery}"`,
                     { encoding: 'utf8', env }
                 ).trim();
 

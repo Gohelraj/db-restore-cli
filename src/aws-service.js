@@ -157,9 +157,18 @@ class AWSService {
         const writeStream = fs.createWriteStream(local);
         
         return new Promise((resolve, reject) => {
+            // Handle both stream and writeStream errors
+            const handleError = (err) => {
+                writeStream.destroy();
+                reject(err);
+            };
+            
             response.Body.pipe(writeStream)
-                .on('error', reject)
+                .on('error', handleError)
                 .on('finish', () => resolve(local));
+            
+            // Also handle writeStream errors separately
+            writeStream.on('error', handleError);
         });
     }
 
