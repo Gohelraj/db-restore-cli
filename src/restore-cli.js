@@ -93,6 +93,16 @@ class DatabaseRestoreManager {
             /no such file or directory/i,
             /connection refused/i
         ];
+        
+        // Pre-compile service name cleanup patterns
+        this._serviceNamePatterns = [
+            { pattern: /[-_]\d{4}[-_]\d{2}[-_]\d{2}.*$/, desc: 'date suffix' },
+            { pattern: /[-_]\d{8}.*$/, desc: '8-digit date' },
+            { pattern: /[-_]\d{14}.*$/, desc: 'timestamp' },
+            { pattern: /\.tar$/, desc: '.tar extension' },
+            { pattern: /[-_]backup.*$/, desc: 'backup suffix' },
+            { pattern: /[-_]dump.*$/, desc: 'dump suffix' }
+        ];
     }
 
     async selectSourceType() {
@@ -212,14 +222,11 @@ class DatabaseRestoreManager {
         // Common patterns: service-name-date.extension, service_name_date.extension
         const baseName = path.basename(filename, path.extname(filename));
 
-        // Remove common date patterns
-        let serviceName = baseName
-            .replace(/[-_]\d{4}[-_]\d{2}[-_]\d{2}.*$/, '') // Remove date suffix
-            .replace(/[-_]\d{8}.*$/, '') // Remove 8-digit date
-            .replace(/[-_]\d{14}.*$/, '') // Remove timestamp
-            .replace(/\.tar$/, '') // Remove .tar if it's .tar.gz
-            .replace(/[-_]backup.*$/, '') // Remove backup suffix
-            .replace(/[-_]dump.*$/, ''); // Remove dump suffix
+        // Remove common date patterns using pre-compiled patterns
+        let serviceName = baseName;
+        for (const { pattern } of this._serviceNamePatterns) {
+            serviceName = serviceName.replace(pattern, '');
+        }
 
         return serviceName || 'unknown_service';
     }
@@ -970,6 +977,14 @@ Please check if this is a valid PostgreSQL backup file.`);
 
         return env;
     }
+    
+    // Get base PostgreSQL connection options (cached)
+    getBaseOptions() {
+        if (!this._baseOptions) {
+            this._baseOptions = `-h ${CONFIG.postgres.host} -p ${CONFIG.postgres.port} -U ${CONFIG.postgres.user}`;
+        }
+        return this._baseOptions;
+    }
 
     // Check if PostgreSQL is running
     async checkPostgreSQL() {
@@ -1097,7 +1112,7 @@ Please check if this is a valid PostgreSQL backup file.`);
         try {
             console.log('🔧 Preparing database for ownership-safe restore...');
 
-            const baseOptions = `-h ${CONFIG.postgres.host} -p ${CONFIG.postgres.port} -U ${CONFIG.postgres.user}`;
+            const baseOptions = this.getBaseOptions();
             const env = this.getPostgresEnv();
 
             // Ensure the current user has necessary privileges
@@ -1127,7 +1142,7 @@ Please check if this is a valid PostgreSQL backup file.`);
         try {
             console.log('\n🔧 Applying comprehensive ownership fixes...');
 
-            const baseOptions = `-h ${CONFIG.postgres.host} -p ${CONFIG.postgres.port} -U ${CONFIG.postgres.user}`;
+            const baseOptions = this.getBaseOptions();
             const env = this.getPostgresEnv();
 
             // Step 1: Fix database-level ownership
@@ -1354,7 +1369,7 @@ Please check if this is a valid PostgreSQL backup file.`);
         try {
             console.log('🔄 Attempting ownership-safe restore methods...');
 
-            const baseOptions = `-h ${CONFIG.postgres.host} -p ${CONFIG.postgres.port} -U ${CONFIG.postgres.user}`;
+            const baseOptions = this.getBaseOptions();
             const env = this.getPostgresEnv();
 
             if (format === 'sql') {
@@ -1695,7 +1710,7 @@ Please check if this is a valid PostgreSQL backup file.`);
         try {
             console.log('\n🔍 Verifying restoration...');
 
-            const baseOptions = `-h ${CONFIG.postgres.host} -p ${CONFIG.postgres.port} -U ${CONFIG.postgres.user}`;
+            const baseOptions = this.getBaseOptions();
             const env = this.getPostgresEnv();
 
             // Test basic connectivity first
